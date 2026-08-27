@@ -1,0 +1,24 @@
+[project]
+name = "itrader-client"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+dependencies = [
+    "httpx",
+    "aiosqlite",
+    "pydantic>=2.0",
+    "tqsdk",
+    "pystray",
+    "Pillow",
+    "toml"
+]
+
+[project.gui-scripts]
+itrader = "tray_app:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["tray_app", "app", "main", "config", "db", "models", "server", "trader"]

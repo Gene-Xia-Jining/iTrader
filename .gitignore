@@ -1,0 +1,19 @@
+# Python 缓存
+.pyi_cache/
+__pycache__/
+*.pyc
+
+# 虚拟环境
+.venv/
+
+# 构建产物
+build/
+dist/
+*.spec
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 数据库（本地数据）
+data/
