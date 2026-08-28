@@ -10,7 +10,8 @@ dependencies = [
     "tqsdk",
     "pystray",
     "Pillow",
-    "toml"
+    "toml",
+    "cryptography>=42",
 ]
 
 [project.gui-scripts]

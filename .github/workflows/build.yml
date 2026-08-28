@@ -1,26 +1,49 @@
-name: Build
+name: Build and Release
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from pyproject.toml
+        id: ver
+        run: |
+          VER=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag (push to main only)
+        if: github.ref == 'refs/heads/main'
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: v${{ steps.ver.outputs.version }}
+          message: "Release v${{ steps.ver.outputs.version }}"
+          force_push_tag: true
+
   build:
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -28,21 +51,51 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install -e .
+          pip install .
 
-      - name: Build with PyInstaller
-        run: pyinstaller iTrader.spec
-
-      - name: Upload artifact (macOS)
+      - name: Build (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: iTrader-macos
-          path: dist/iTrader.app
+        run: pyinstaller specs/mac.spec
 
-      - name: Upload artifact (Windows)
+      - name: Build (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        run: pyinstaller specs/windows.spec
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r itrader-${{ github.sha }}-macos.zip iTrader
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        run: |
+          cd dist
+          zip -r itrader-${{ github.sha }}-windows.zip iTrader
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: iTrader-windows
-          path: dist/iTrader.exe
+          name: itrader-${{ runner.os }}
+          path: dist/itrader-${{ github.sha }}-${{ runner.os }}.zip
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Release ${{ needs.version.outputs.version }}
+          body: Automated GitHub release for iTrader Client
+          files: |
+            artifacts/itrader-macOS/*.zip
+            artifacts/itrader-windows/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

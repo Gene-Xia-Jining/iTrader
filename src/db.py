@@ -88,7 +88,7 @@ class Database:
                     result.symbol,
                     result.side,
                     result.price,
-                    result.target_position,
+                    result.position,
                     result.updated_at,
                 ),
             )

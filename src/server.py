@@ -1,7 +1,10 @@
 import json
 import httpx
+import ssl
+from pathlib import Path
 
 from .models import TradingResult
+from .token_manager import TokenManager
 
 
 class ServerClient:
@@ -10,9 +13,14 @@ class ServerClient:
         self,
         server_url: str,
         symbols: list[str],
+        token_manager: TokenManager | None = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.symbols = symbols
+        self.token_manager = token_manager or TokenManager(server_url)
+
+    def _make_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=None)
 
     async def stream(self):
 
@@ -26,16 +34,19 @@ class ServerClient:
             f"?symbols={symbols}"
         )
 
-        async with httpx.AsyncClient(
-            timeout=None
-        ) as client:
+        # Get authentication headers
+        auth_headers = self.token_manager.get_auth_headers()
+        headers = {
+            "Accept": "text/event-stream",
+            **auth_headers
+        }
+
+        async with self._make_client() as client:
 
             async with client.stream(
                 "GET",
                 url,
-                headers={
-                    "Accept": "text/event-stream"
-                },
+                headers=headers,
             ) as response:
 
                 response.raise_for_status()
