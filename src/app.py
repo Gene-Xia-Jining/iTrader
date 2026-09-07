@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import asyncio
 import threading
+import sys
 from pathlib import Path
 import tomllib
 import json
@@ -49,33 +50,66 @@ class TradingApp:
         }
     
     def create_menu(self):
-        """创建菜单栏"""
+        """创建菜单栏（覆盖 macOS 默认的英文 File/Edit/Window/Help）"""
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-        
-        # 文件菜单
+
+        # 文件菜单（替换英文 File）
         file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="文件", menu=file_menu)
+        if sys.platform == "darwin":
+            file_menu.add_command(label="关闭窗口", accelerator="Cmd+W",
+                                  command=lambda: self.root.event_generate("<<CloseWindow>>"))
         file_menu.add_command(label="配置设置", command=self.open_config)
         file_menu.add_separator()
-        file_menu.add_command(label="退出", command=self.on_closing)
+        file_menu.add_command(label="退出", accelerator="Cmd+Q" if sys.platform == "darwin" else "Ctrl+Q",
+                              command=self.on_closing)
+        menubar.add_cascade(label="文件", menu=file_menu)
+
+        # 编辑菜单（替换英文 Edit）
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="撤销", accelerator="Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z",
+                              command=lambda: self.root.event_generate("<<Undo>>"))
+        edit_menu.add_separator()
+        edit_menu.add_command(label="剪切", accelerator="Cmd+X" if sys.platform == "darwin" else "Ctrl+X",
+                              command=lambda: self.root.event_generate("<<Cut>>"))
+        edit_menu.add_command(label="复制", accelerator="Cmd+C" if sys.platform == "darwin" else "Ctrl+C",
+                              command=lambda: self.root.event_generate("<<Copy>>"))
+        edit_menu.add_command(label="粘贴", accelerator="Cmd+V" if sys.platform == "darwin" else "Ctrl+V",
+                              command=lambda: self.root.event_generate("<<Paste>>"))
+        edit_menu.add_command(label="全选", accelerator="Cmd+A" if sys.platform == "darwin" else "Ctrl+A",
+                              command=lambda: self.root.event_generate("<<SelectAll>>"))
+        menubar.add_cascade(label="编辑", menu=edit_menu)
         
         # 交易菜单
         trading_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="交易", menu=trading_menu)
         trading_menu.add_command(label="启动自动交易", command=self.start_trading)
         trading_menu.add_command(label="停止自动交易", command=self.stop_trading)
+        menubar.add_cascade(label="交易", menu=trading_menu)
         
         # 视图菜单
         view_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="视图", menu=view_menu)
         view_menu.add_command(label="清空日志", command=self.clear_logs)
+        menubar.add_cascade(label="视图", menu=view_menu)
+
+        # 窗口菜单（替换英文 Window）
+        window_menu = tk.Menu(menubar, tearoff=0)
+        if sys.platform == "darwin":
+            window_menu.add_command(label="最小化", accelerator="Cmd+M",
+                                    command=lambda: self.root.iconify())
+            window_menu.add_command(label="缩放",
+                                    command=lambda: self.root.event_generate("<<Zoom>>"))
+            window_menu.add_separator()
+        window_menu.add_command(label="显示主窗口",
+                                command=lambda: (self.root.deiconify(), self.root.lift(), self.root.focus_force()))
+        menubar.add_cascade(label="窗口", menu=window_menu)
         
-        # 帮助菜单
+        # 帮助菜单（替换英文 Help）
         help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="帮助", menu=help_menu)
         help_menu.add_command(label="使用说明")
-        help_menu.add_command(label="关于")
+        help_menu.add_command(label="关于",
+                              command=lambda: messagebox.showinfo(
+                                  "关于", "iTrader 交易客户端\n版本 0.1.0", parent=self.root))
+        menubar.add_cascade(label="帮助", menu=help_menu)
     
     def create_main_frame(self):
         """创建主界面"""

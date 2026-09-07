@@ -196,6 +196,73 @@ class TradingTrayApp:
             # 托盘初始化失败不应影响主程序
             self.tray_icon = None
     
+    def create_menubar(self, window):
+        """创建菜单栏（覆盖 macOS 默认的英文 File/Edit/Window/Help）"""
+        menubar = tk.Menu(window)
+
+        # 文件菜单（替换英文 File）
+        file_menu = tk.Menu(menubar, tearoff=0)
+        if sys.platform == "darwin":
+            file_menu.add_command(label="关闭窗口", accelerator="Cmd+W",
+                                  command=lambda: window.event_generate("<<CloseWindow>>"))
+        file_menu.add_command(label="配置设置", command=self.open_config_window)
+        file_menu.add_separator()
+        file_menu.add_command(label="退出", accelerator="Cmd+Q" if sys.platform == "darwin" else "Ctrl+Q",
+                              command=self.quit_app)
+        menubar.add_cascade(label="文件", menu=file_menu)
+
+        # 编辑菜单（替换英文 Edit）
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="撤销", accelerator="Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z",
+                              command=lambda: window.event_generate("<<Undo>>"))
+        edit_menu.add_separator()
+        edit_menu.add_command(label="剪切", accelerator="Cmd+X" if sys.platform == "darwin" else "Ctrl+X",
+                              command=lambda: window.event_generate("<<Cut>>"))
+        edit_menu.add_command(label="复制", accelerator="Cmd+C" if sys.platform == "darwin" else "Ctrl+C",
+                              command=lambda: window.event_generate("<<Copy>>"))
+        edit_menu.add_command(label="粘贴", accelerator="Cmd+V" if sys.platform == "darwin" else "Ctrl+V",
+                              command=lambda: window.event_generate("<<Paste>>"))
+        edit_menu.add_command(label="全选", accelerator="Cmd+A" if sys.platform == "darwin" else "Ctrl+A",
+                              command=lambda: window.event_generate("<<SelectAll>>"))
+        menubar.add_cascade(label="编辑", menu=edit_menu)
+
+        # 交易菜单
+        trading_menu = tk.Menu(menubar, tearoff=0)
+        trading_menu.add_command(label="启动自动交易", command=self.start_trading)
+        trading_menu.add_command(label="停止自动交易", command=self.stop_trading)
+        menubar.add_cascade(label="交易", menu=trading_menu)
+
+        # 视图菜单
+        view_menu = tk.Menu(menubar, tearoff=0)
+        view_menu.add_command(label="显示主窗口", command=self.show_main_window)
+        view_menu.add_command(label="查看日志", command=self.show_log_window)
+        menubar.add_cascade(label="视图", menu=view_menu)
+
+        # 窗口菜单（替换英文 Window）
+        window_menu = tk.Menu(menubar, tearoff=0)
+        if sys.platform == "darwin":
+            window_menu.add_command(label="最小化", accelerator="Cmd+M",
+                                    command=lambda: window.iconify() if hasattr(window, "iconify") else None)
+            window_menu.add_command(label="缩放", command=lambda: window.event_generate("<<Zoom>>"))
+            window_menu.add_separator()
+        window_menu.add_command(label="显示主窗口", command=self.show_main_window)
+        menubar.add_cascade(label="窗口", menu=window_menu)
+
+        # 帮助菜单（替换英文 Help）
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="关于", command=lambda: messagebox.showinfo(
+            "关于", "iTrader 交易客户端\n版本 0.1.0", parent=window))
+        menubar.add_cascade(label="帮助", menu=help_menu)
+
+        window.config(menu=menubar)
+
+        # macOS 特殊：把 root 的菜单栏也设置，确保顶部菜单栏为中文
+        if sys.platform == "darwin" and hasattr(window, "master") and window.master is not None:
+            try:
+                window.master.config(menu=menubar)
+            except Exception:
+                pass
+
     def create_main_window(self):
         """创建主窗口"""
         self.main_window = tk.Toplevel(self.root)
@@ -204,11 +271,12 @@ class TradingTrayApp:
         self.main_window.protocol("WM_DELETE_WINDOW", self.on_main_window_close)
 
         # 创建界面
+        self.create_menubar(self.main_window)
         self.create_main_frame()
         self.create_status_bar()
 
-        # 启动时直接显示主窗口（打包后窗口不可见会误以为“没有反应”）
-    
+        # 启动时直接显示主窗口（打包后窗口不可见会误以为"没有反应"）
+
     def create_main_frame(self):
         """创建主界面"""
         main_frame = ttk.Frame(self.main_window, padding="10")
