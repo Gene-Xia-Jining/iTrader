@@ -1,10 +1,10 @@
 import asyncio
 import tomllib
 
-from .database import Database
-from .server import ServerClient
-from .trader import Trader
-from .token_manager import TokenManager
+from db import Database
+from server import ServerClient
+from trader import Trader
+from token_manager import TokenManager
 
 
 async def main():

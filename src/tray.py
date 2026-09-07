@@ -126,6 +126,12 @@ class TradingTrayApp:
     def load_config(self):
         """加载配置文件"""
         config_path = Path("config.toml")
+        # 打包后 config.toml 位于 PyInstaller 的 _MEIPASS 目录，
+        # 当前工作目录不存在时从打包目录读取
+        if not config_path.exists() and getattr(sys, "frozen", False):
+            bundled = Path(sys._MEIPASS) / "config.toml"
+            if bundled.exists():
+                config_path = bundled
         if config_path.exists():
             try:
                 with open(config_path, "rb") as f:
@@ -154,45 +160,54 @@ class TradingTrayApp:
     
     def create_tray_icon(self):
         """创建托盘图标"""
-        # 创建图标图像
-        icon_image = self.create_image(64, 64, 'darkblue', 'yellow')
-        
-        # 创建托盘菜单
-        menu = (
-            pystray.MenuItem("显示/隐藏主窗口", self.toggle_main_window),
-            pystray.MenuItem("启动自动交易", self.start_trading),
-            pystray.MenuItem("停止自动交易", self.stop_trading),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("配置设置", self.open_config_window),
-            pystray.MenuItem("查看日志", self.show_log_window),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出", self.quit_app)
-        )
-        
-        # 创建托盘图标
-        self.tray_icon = pystray.Icon(
-            "iTrader",
-            icon_image,
-            "iTrader 交易客户端",
-            menu
-        )
-        
-        # 在单独的线程中运行托盘图标
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        # macOS 上 pystray 必须在主线程运行（与 tkinter 冲突），
+        # 后台线程运行会导致进程崩溃，因此 macOS 直接使用窗口模式
+        if sys.platform == "darwin":
+            self.tray_icon = None
+            return
+
+        try:
+            # 创建图标图像
+            icon_image = self.create_image(64, 64, 'darkblue', 'yellow')
+
+            # 创建托盘菜单
+            menu = (
+                pystray.MenuItem("显示/隐藏主窗口", self.toggle_main_window),
+                pystray.MenuItem("启动自动交易", self.start_trading),
+                pystray.MenuItem("停止自动交易", self.stop_trading),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("配置设置", self.open_config_window),
+                pystray.MenuItem("查看日志", self.show_log_window),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("退出", self.quit_app)
+            )
+
+            # 创建托盘图标
+            self.tray_icon = pystray.Icon(
+                "iTrader",
+                icon_image,
+                "iTrader 交易客户端",
+                menu
+            )
+
+            # 在单独的线程中运行托盘图标
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        except Exception:
+            # 托盘初始化失败不应影响主程序
+            self.tray_icon = None
     
     def create_main_window(self):
         """创建主窗口"""
         self.main_window = tk.Toplevel(self.root)
         self.main_window.title("iTrader 交易客户端")
         self.main_window.geometry("800x600")
-        self.main_window.protocol("WM_DELETE_WINDOW", self.hide_main_window)
-        
+        self.main_window.protocol("WM_DELETE_WINDOW", self.on_main_window_close)
+
         # 创建界面
         self.create_main_frame()
         self.create_status_bar()
-        
-        # 初始隐藏
-        self.hide_main_window()
+
+        # 启动时直接显示主窗口（打包后窗口不可见会误以为“没有反应”）
     
     def create_main_frame(self):
         """创建主界面"""
@@ -290,7 +305,16 @@ class TradingTrayApp:
     def hide_main_window(self):
         """隐藏主窗口"""
         self.main_window.withdraw()
-    
+
+    def on_main_window_close(self):
+        """点击窗口关闭按钮"""
+        if self.tray_icon:
+            # 有托盘时，关闭窗口只隐藏到托盘
+            self.hide_main_window()
+        else:
+            # 无托盘（macOS）时，关闭窗口即退出，避免应用消失无法找回
+            self.quit_app()
+
     def start_trading(self, icon=None, item=None):
         """启动自动交易"""
         if self.trading_active:
@@ -451,7 +475,7 @@ class TradingTrayApp:
     
     def show_error(self, message):
         """显示错误消息"""
-        self.main_window.after(0, messagebox.showerror, "错误", message)
+        self.root.after(0, messagebox.showerror, "错误", message)
     
     def show_notification(self, title, message):
         """显示系统通知"""
@@ -483,6 +507,14 @@ class TradingTrayApp:
         self.root.mainloop()
 
 def main():
+    # 打包后进程工作目录可能不可写，切换到用户目录，
+    # 保证 data/、config.toml 可读写
+    if getattr(sys, "frozen", False):
+        workdir = Path.home() / ".itrader"
+        workdir.mkdir(parents=True, exist_ok=True)
+        os.chdir(workdir)
+        os.makedirs("data", exist_ok=True)
+
     app = TradingTrayApp()
     app.run()
 

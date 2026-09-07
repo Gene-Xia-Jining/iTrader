@@ -19,6 +19,7 @@ hiddenimports = [
     'config',
     'app',
     'main',
+    'token_manager',
     'aiosqlite',
     'httpx',
     'pydantic',

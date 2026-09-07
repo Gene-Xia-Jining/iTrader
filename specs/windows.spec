@@ -1,46 +1,54 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-
-block_cipher = None
+from PyInstaller.utils.hooks import collect_all
 
 # SPECPATH 是 PyInstaller 注入的 spec 文件所在目录
 ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 SRC = os.path.join(ROOT, 'src')
 
+datas = [
+    (os.path.join(ROOT, 'config.toml'), '.'),
+]
+binaries = []
+
+# tqsdk 包含运行时必需的数据文件（web 页面等），需一并收集
+tq_datas, tq_binaries, tq_hiddenimports = collect_all('tqsdk')
+datas += tq_datas
+binaries += tq_binaries
+
+hiddenimports = [
+    'db',
+    'server',
+    'trader',
+    'models',
+    'config',
+    'app',
+    'main',
+    'token_manager',
+    'aiosqlite',
+    'httpx',
+    'pydantic',
+    'pystray',
+    'PIL',
+    'PIL.Image',
+    'PIL.ImageDraw',
+    'toml',
+    'tomllib',
+] + tq_hiddenimports
+
 a = Analysis(
     [os.path.join(SRC, 'tray.py')],
     pathex=[SRC],
-    binaries=[],
-    datas=[
-        (os.path.join(ROOT, 'config.toml'), '.'),
-    ],
-    hiddenimports=[
-        'db',
-        'server',
-        'trader',
-        'models',
-        'config',
-        'app',
-        'main',
-        'aiosqlite',
-        'httpx',
-        'pydantic',
-        'pystray',
-        'PIL',
-        'PIL.Image',
-        'PIL.ImageDraw',
-        'toml',
-        'tomllib',
-        'tqsdk',
-    ],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 

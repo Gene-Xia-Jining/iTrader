@@ -3,7 +3,6 @@ name: Build and Release
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -15,6 +14,7 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,23 +23,24 @@ jobs:
         run: |
           VER=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=$VER" >> "$GITHUB_OUTPUT"
 
-      - name: Create tag (push to main only)
-        if: github.ref == 'refs/heads/main'
+      - name: Create tag
         uses: rickstaa/action-create-tag@v1
         with:
-          tag: v${{ steps.ver.outputs.version }}
-          message: "Release v${{ steps.ver.outputs.version }}"
+          tag: ${{ steps.ver.outputs.tag }}
+          message: "Release ${{ steps.ver.outputs.version }}"
           force_push_tag: true
 
   build:
     needs: version
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -65,24 +66,28 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           cd dist
-          zip -ry itrader-${{ github.sha }}-macos.zip iTrader.app
+          zip -ry itrader-${{ needs.version.outputs.version }}-macos.zip iTrader.app
 
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cd dist
-          Compress-Archive -Path iTrader.exe -DestinationPath itrader-${{ github.sha }}-windows.zip -Force
+          Compress-Archive `
+            -Path iTrader.exe `
+            -DestinationPath itrader-${{ needs.version.outputs.version }}-windows.zip `
+            -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: itrader-${{ runner.os }}
-          path: dist/itrader-${{ github.sha }}-*.zip
+          path: dist/itrader-${{ needs.version.outputs.version }}-*.zip
 
   release:
     needs: [version, build]
     runs-on: ubuntu-latest
+
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4

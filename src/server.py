@@ -3,8 +3,8 @@ import httpx
 import ssl
 from pathlib import Path
 
-from .models import TradingResult
-from .token_manager import TokenManager
+from models import TradingResult
+from token_manager import TokenManager
 
 
 class ServerClient:
