@@ -1,13 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
 block_cipher = None
 
+# SPECPATH 是 PyInstaller 注入的 spec 文件所在目录
+ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
+SRC = os.path.join(ROOT, 'src')
+
 a = Analysis(
-    ['src/tray.py'],
-    pathex=['src'],
+    [os.path.join(SRC, 'tray.py')],
+    pathex=[SRC],
     binaries=[],
     datas=[
-        ('config.toml', '.'),
+        (os.path.join(ROOT, 'config.toml'), '.'),
     ],
     hiddenimports=[
         'db',

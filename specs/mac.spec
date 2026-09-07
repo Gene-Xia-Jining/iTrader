@@ -1,9 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 from PyInstaller.utils.hooks import collect_all
 
+# SPECPATH 是 PyInstaller 注入的 spec 文件所在目录
+ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
+SRC = os.path.join(ROOT, 'src')
+
 datas = [
-    ('config.toml', '.'),
+    (os.path.join(ROOT, 'config.toml'), '.'),
 ]
 binaries = []
 hiddenimports = [
@@ -32,8 +37,8 @@ binaries += tq_binaries
 hiddenimports += tq_hiddenimports
 
 a = Analysis(
-    ['src/tray.py'],
-    pathex=['src'],
+    [os.path.join(SRC, 'tray.py')],
+    pathex=[SRC],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
