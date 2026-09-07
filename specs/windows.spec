@@ -3,8 +3,8 @@
 block_cipher = None
 
 a = Analysis(
-    ['tray_app.py'],
-    pathex=[],
+    ['src/tray.py'],
+    pathex=['src'],
     binaries=[],
     datas=[
         ('config.toml', '.'),

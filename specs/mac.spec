@@ -5,31 +5,38 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     ('config.toml', '.'),
 ]
+binaries = []
+hiddenimports = [
+    'db',
+    'server',
+    'trader',
+    'models',
+    'config',
+    'app',
+    'main',
+    'aiosqlite',
+    'httpx',
+    'pydantic',
+    'pystray',
+    'PIL',
+    'PIL.Image',
+    'PIL.ImageDraw',
+    'toml',
+    'tomllib',
+]
+
+# tqsdk 包含运行时必需的数据文件（web 页面等），需一并收集
+tq_datas, tq_binaries, tq_hiddenimports = collect_all('tqsdk')
+datas += tq_datas
+binaries += tq_binaries
+hiddenimports += tq_hiddenimports
 
 a = Analysis(
-    ['tray_app.py'],
-    pathex=['.'],
-    binaries=[],
+    ['src/tray.py'],
+    pathex=['src'],
+    binaries=binaries,
     datas=datas,
-    hiddenimports=[
-        'db',
-        'server',
-        'trader',
-        'models',
-        'config',
-        'app',
-        'main',
-        'aiosqlite',
-        'httpx',
-        'pydantic',
-        'pystray',
-        'PIL',
-        'PIL.Image',
-        'PIL.ImageDraw',
-        'toml',
-        'tomllib',
-        'tqsdk',
-    ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

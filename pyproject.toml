@@ -15,11 +15,12 @@ dependencies = [
 ]
 
 [project.gui-scripts]
-itrader = "tray_app:main"
+itrader = "tray:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["tray_app", "app", "main", "config", "db", "models", "server", "trader"]
+package-dir = {"" = "src"}
+py-modules = ["tray", "app", "main", "config", "db", "models", "server", "trader"]
