@@ -65,37 +65,37 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           cd dist
-          zip -r itrader-${{ github.sha }}-macos.zip iTrader
+          zip -ry itrader-${{ github.sha }}-macos.zip iTrader.app
 
       - name: Package Windows
         if: runner.os == 'Windows'
         run: |
           cd dist
-          zip -r itrader-${{ github.sha }}-windows.zip iTrader
+          zip -r itrader-${{ github.sha }}-windows.zip iTrader.exe
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: itrader-${{ runner.os }}
-          path: dist/itrader-${{ github.sha }}-${{ runner.os }}.zip
+          path: dist/itrader-${{ github.sha }}-*.zip
 
   release:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: Release ${{ needs.version.outputs.version }}
           body: Automated GitHub release for iTrader Client
           files: |
             artifacts/itrader-macOS/*.zip
-            artifacts/itrader-windows/*.zip
+            artifacts/itrader-Windows/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
