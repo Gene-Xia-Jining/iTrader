@@ -18,10 +18,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read version from src/itrader/__init__.py
+      - name: Read version from src/__init__.py
         id: ver
         run: |
-          VER=$(grep -m1 '^__version__' src/itrader/__init__.py | sed 's/.*"\(.*\)"/\1/')
+          VER=$(grep -m1 '^__version__' src/__init__.py | sed 's/.*"\(.*\)"/\1/')
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "tag=$VER" >> "$GITHUB_OUTPUT"
 

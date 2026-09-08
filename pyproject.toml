@@ -14,21 +14,21 @@ dependencies = [
 ]
 
 [tool.setuptools.dynamic]
-version = {attr = "itrader.__version__"}
+version = {attr = "src.__version__"}
 
 [project.gui-scripts]
-itrader = "itrader.__main__:run_gui"
+itrader = "src.__main__:run_gui"
 
 [project.scripts]
-itrader-cli = "itrader.cli:main"
+itrader-cli = "src.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-packages = ["itrader", "itrader.domain", "itrader.application", "itrader.infrastructure", "itrader.infrastructure.db", "itrader.infrastructure.api", "itrader.infrastructure.trading", "itrader.infrastructure.certs", "itrader.infrastructure.config", "itrader.presentation", "itrader.resources"]
+package-dir = {"" = "."}
+packages = ["src", "src.domain", "src.application", "src.infrastructure", "src.infrastructure.db", "src.infrastructure.api", "src.infrastructure.trading", "src.infrastructure.certs", "src.infrastructure.config", "src.presentation", "src.resources"]
 
 [tool.setuptools.package-data]
-"itrader.resources" = ["*.png"]
+"src.resources" = ["*.png"]

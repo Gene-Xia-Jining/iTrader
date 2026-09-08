@@ -23,7 +23,7 @@ def run_gui():
     default_font.setPointSize(13)
     qt_app.setFont(default_font)
 
-    from itrader.presentation.app_controller import AppController
+    from src.presentation.app_controller import AppController
 
     controller = AppController(qt_app, workdir)
     controller.start()

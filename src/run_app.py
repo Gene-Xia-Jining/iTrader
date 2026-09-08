@@ -1,4 +1,4 @@
-from itrader.__main__ import run_gui
+from src.__main__ import run_gui
 
 
 def main():
