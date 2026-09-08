@@ -1,6 +1,6 @@
 [project]
 name = "itrader-client"
-version = "0.1.0"
+dynamic = ["version"]
 requires-python = ">=3.11"
 
 dependencies = [
@@ -12,6 +12,9 @@ dependencies = [
     "cryptography>=42",
     "PySide6>=6.6",
 ]
+
+[tool.setuptools.dynamic]
+version = {attr = "itrader.__version__"}
 
 [project.gui-scripts]
 itrader = "itrader.__main__:run_gui"
