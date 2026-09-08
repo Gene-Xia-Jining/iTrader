@@ -1,7 +1,9 @@
 # Python 缓存
 .pyi_cache/
+.pyi_config/
 __pycache__/
 *.pyc
+*.egg-info/
 
 # 虚拟环境
 .venv/

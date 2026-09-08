@@ -1,6 +1,6 @@
 [project]
 name = "itrader-client"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.11"
 
 dependencies = [
@@ -8,14 +8,16 @@ dependencies = [
     "aiosqlite",
     "pydantic>=2.0",
     "tqsdk",
-    "pystray",
-    "Pillow",
     "toml",
     "cryptography>=42",
+    "PySide6>=6.6",
 ]
 
 [project.gui-scripts]
-itrader = "tray:main"
+itrader = "itrader.__main__:run_gui"
+
+[project.scripts]
+itrader-cli = "itrader.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -23,4 +25,5 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["tray", "app", "main", "config", "db", "models", "server", "trader"]
+packages = ["itrader", "itrader.domain", "itrader.application", "itrader.infrastructure", "itrader.infrastructure.db", "itrader.infrastructure.api", "itrader.infrastructure.trading", "itrader.infrastructure.certs", "itrader.infrastructure.config", "itrader.presentation"]
+py-modules = ["tray", "app", "main", "config", "db", "models", "server", "trader", "token_manager", "cert_enroll", "pki_client", "main_with_cert", "test_token", "run_app"]

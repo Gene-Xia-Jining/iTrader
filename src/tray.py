@@ -200,6 +200,43 @@ class TradingTrayApp:
         """创建菜单栏（覆盖 macOS 默认的英文 File/Edit/Window/Help）"""
         menubar = tk.Menu(window)
 
+        # macOS 特殊处理：应用菜单 (Application Menu) 汉化
+        if sys.platform == "darwin":
+            app_menu = tk.Menu(menubar, name='apple')
+            menubar.add_cascade(menu=app_menu)
+            app_menu.add_command(label="关于 iTrader", command=lambda: messagebox.showinfo(
+                "关于", "iTrader 交易客户端\n版本 0.1.0", parent=window))
+            app_menu.add_separator()
+            app_menu.add_command(label="偏好设置...", accelerator="Cmd+,", command=self.open_config_window)
+            app_menu.add_separator()
+            
+            # 使用 AppKit 原生修改系统级的服务、隐藏和退出菜单项文本
+            try:
+                from AppKit import NSApplication
+                ns_app = NSApplication.sharedApplication()
+                main_menu = ns_app.mainMenu()
+                if main_menu and main_menu.numberOfItems() > 0:
+                    apple_item = main_menu.itemAtIndex_(0)
+                    if apple_item and apple_item.submenu():
+                        sub = apple_item.submenu()
+                        # 遍历 AppKit 生成的初始菜单项，汉化常见英文项
+                        translation_map = {
+                            "About iTrader": "关于 iTrader",
+                            "Preferences…": "偏好设置...",
+                            "Services": "服务",
+                            "Hide iTrader": "隐藏 iTrader",
+                            "Hide Others": "隐藏其他",
+                            "Show All": "显示全部",
+                            "Quit iTrader": "退出 iTrader"
+                        }
+                        for i in range(sub.numberOfItems()):
+                            item = sub.itemAtIndex_(i)
+                            title = item.title()
+                            if title in translation_map:
+                                item.setTitle_(translation_map[title])
+            except Exception:
+                pass
+
         # 文件菜单（替换英文 File）
         file_menu = tk.Menu(menubar, tearoff=0)
         if sys.platform == "darwin":

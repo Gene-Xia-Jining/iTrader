@@ -1,0 +1,160 @@
+import asyncio
+from dataclasses import dataclass
+from typing import Optional
+
+from ..domain.entities import (
+    StrategySignal,
+    TradeCommand,
+    TradeCommandStatus,
+    TradingConfiguration,
+)
+from ..domain.events import (
+    EventBus,
+    LogEvent,
+    LogLevel,
+    SignalReceivedEvent,
+    StatusChangedEvent,
+    TradeExecutedEvent,
+    TradeFailedEvent,
+    TradingStartedEvent,
+    TradingStoppedEvent,
+)
+from ..domain.repositories import (
+    CertificateStore,
+    StrategyStreamClient,
+    TokenStore,
+    TradeCommandRepository,
+)
+from ..domain.services import TradingExecutor
+
+
+@dataclass
+class TradingEngineDeps:
+    config: TradingConfiguration
+    trade_repo: TradeCommandRepository
+    stream_client: StrategyStreamClient
+    trading_executor: TradingExecutor
+    event_bus: EventBus
+    auto_trade: bool = False
+
+
+class TradingEngine:
+    def __init__(self, deps: TradingEngineDeps):
+        self.config = deps.config
+        self.trade_repo = deps.trade_repo
+        self.stream_client = deps.stream_client
+        self.trading_executor = deps.trading_executor
+        self.event_bus = deps.event_bus
+        self.auto_trade = deps.auto_trade
+        self._running = False
+        self._server_connected = False
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def set_auto_trade(self, value: bool) -> None:
+        self.auto_trade = value
+        self._log(f"自动交易 {'开启' if value else '关闭'}", LogLevel.INFO)
+
+    def _log(self, message: str, level: LogLevel = LogLevel.INFO) -> None:
+        self.event_bus.publish(LogEvent(message=message, level=level))
+
+    def _publish_status(self) -> None:
+        self.event_bus.publish(
+            StatusChangedEvent(
+                trading_active=self._running,
+                server_connected=self._server_connected,
+            )
+        )
+
+    async def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self.event_bus.publish(TradingStartedEvent())
+        self._log("自动交易已启动", LogLevel.INFO)
+        self._publish_status()
+        try:
+            await self._run_loop()
+        finally:
+            await self._shutdown()
+
+    async def stop(self) -> None:
+        self._running = False
+        try:
+            await self.trading_executor.close()
+        except Exception:
+            pass
+
+    async def _shutdown(self) -> None:
+        self._running = False
+        self._server_connected = False
+        self.event_bus.publish(TradingStoppedEvent())
+        self._log("自动交易已停止", LogLevel.INFO)
+        self._publish_status()
+
+    async def _run_loop(self) -> None:
+        while self._running:
+            try:
+                self._server_connected = True
+                self._publish_status()
+                self._log(f"连接到服务器: {self.config.server_url}", LogLevel.INFO)
+                async for signal in self.stream_client.stream():
+                    if not self._running:
+                        break
+                    await self._handle_signal(signal)
+            except Exception as e:
+                self._server_connected = False
+                self._publish_status()
+                if self._running:
+                    self._log(f"连接错误: {e}", LogLevel.ERROR)
+                    await asyncio.sleep(5)
+
+    async def _handle_signal(self, signal: StrategySignal) -> None:
+        self.event_bus.publish(SignalReceivedEvent(signal=signal))
+        self._log(
+            f"收到策略结果: {signal.symbol} 价位 {signal.price} 仓位 {signal.position}",
+            LogLevel.INFO,
+        )
+
+        if await self.trade_repo.exists(signal.id):
+            self._log(f"已执行过: {signal.id}", LogLevel.WARNING)
+            return
+
+        command = TradeCommand(
+            id=signal.id,
+            symbol=signal.symbol,
+            side=signal.side,
+            price=signal.price,
+            target_position=signal.position,
+            received_at=signal.updated_at,
+            status=TradeCommandStatus.PENDING,
+        )
+        await self.trade_repo.add(command)
+
+        if not self.auto_trade:
+            self._log("自动交易关闭", LogLevel.INFO)
+            return
+
+        try:
+            await self.trade_repo.set_status(signal.id, TradeCommandStatus.EXECUTING)
+            await self.trading_executor.set_target_position(
+                signal.symbol, signal.position
+            )
+            await self.trade_repo.set_status(signal.id, TradeCommandStatus.EXECUTED)
+            self.event_bus.publish(
+                TradeExecutedEvent(
+                    symbol=signal.symbol, target_position=signal.position
+                )
+            )
+            self._log(
+                f"交易执行成功: {signal.symbol} 仓位 {signal.position}",
+                LogLevel.SUCCESS,
+            )
+        except Exception as e:
+            await self.trade_repo.set_status(
+                signal.id, TradeCommandStatus.FAILED, error=str(e)
+            )
+            self.event_bus.publish(TradeFailedEvent(symbol=signal.symbol, error=str(e)))
+            self._log(f"交易执行失败: {e}", LogLevel.ERROR)
