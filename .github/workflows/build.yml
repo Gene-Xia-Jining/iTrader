@@ -101,7 +101,7 @@ jobs:
           name: Release ${{ needs.version.outputs.version }}
           body: Automated GitHub release for iTrader Client
           files: |
-            artifacts/iTrader-macOS/*.zip
-            artifacts/iTrader-Windows/*.zip
+            artifacts/itrader-macOS/*.zip
+            artifacts/itrader-Windows/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
