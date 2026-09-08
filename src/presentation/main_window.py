@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..domain.entities import TradingConfiguration
 from .viewmodels import ConfigDialogViewModel, MainViewModel
 
@@ -468,7 +469,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "关于 iTrader",
-            "iTrader 交易客户端\n版本 0.1.0\n\n基于 Clean Architecture + PySide6 构建",
+            f"iTrader 交易客户端\n版本 {__version__}\n\n基于 Clean Architecture + PySide6 构建",
         )
 
     def ask_confirm_quit(self) -> bool:

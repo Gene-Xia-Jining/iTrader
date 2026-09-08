@@ -9,14 +9,13 @@ SRC = os.path.join(ROOT, 'src')
 
 datas = [
     (os.path.join(ROOT, 'config.toml'), '.'),
-    (os.path.join(SRC, 'itrader', 'resources', 'icon.png'), 'itrader/resources'),
+    (os.path.join(SRC, 'resources', 'icon.png'), 'src/resources'),
 ]
 binaries = []
-
 hiddenimports = [
-    # clean-architecture itrader package
-    'itrader',
-    *collect_submodules('itrader'),
+    # clean-architecture src package
+    'src',
+    *collect_submodules('src'),
     # deps
     'aiosqlite',
     'httpx',
@@ -45,7 +44,7 @@ hiddenimports += ps_hiddenimports
 
 a = Analysis(
     [os.path.join(SRC, 'run_app.py')],
-    pathex=[SRC],
+    pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
