@@ -25,5 +25,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["itrader", "itrader.domain", "itrader.application", "itrader.infrastructure", "itrader.infrastructure.db", "itrader.infrastructure.api", "itrader.infrastructure.trading", "itrader.infrastructure.certs", "itrader.infrastructure.config", "itrader.presentation"]
-py-modules = ["tray", "app", "main", "config", "db", "models", "server", "trader", "token_manager", "cert_enroll", "pki_client", "main_with_cert", "test_token", "run_app"]
+packages = ["itrader", "itrader.domain", "itrader.application", "itrader.infrastructure", "itrader.infrastructure.db", "itrader.infrastructure.api", "itrader.infrastructure.trading", "itrader.infrastructure.certs", "itrader.infrastructure.config", "itrader.presentation", "itrader.resources"]
+
+[tool.setuptools.package-data]
+"itrader.resources" = ["*.png"]

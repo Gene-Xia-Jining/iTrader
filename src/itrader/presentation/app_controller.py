@@ -1,46 +1,18 @@
 import asyncio
 import sys
-import os
+import threading
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, QTimer, Signal, Qt
-from PySide6.QtGui import QAction, QIcon, QPixmap, QColor, QPainter
-from PySide6.QtWidgets import (
-    QApplication,
-    QMenu,
-    QMessageBox,
-    QSystemTrayIcon,
-)
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..application.bootstrap import Bootstrap
 from ..application.trading_engine import TradingEngine
 from ..domain.entities import TradingConfiguration
 from ..domain.events import ConfigChangedEvent, LogEvent, LogLevel
-from .main_window import MainWindow, ConfigDialog, DARK_QSS
+from .main_window import ConfigDialog, MainWindow
+from .tray import TrayApp
 from .viewmodels import MainViewModel
-
-
-def make_tray_icon(size: int = 64) -> QIcon:
-    pix = QPixmap(size, size)
-    pix.fill(Qt.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHint(QPainter.Antialiasing)
-    outer_rect = pix.rect().adjusted(2, 2, -2, -2)
-    painter.setBrush(QColor("#1e1e2e"))
-    painter.setPen(QColor("#45475a"))
-    painter.drawRoundedRect(outer_rect, size // 8, size // 8)
-    inner_size = size * 3 // 5
-    inner_x = (size - inner_size) // 2
-    inner_y = (size - inner_size) // 2
-    painter.setBrush(QColor("#f9e2af"))
-    painter.setPen(Qt.NoPen)
-    painter.drawRoundedRect(
-        inner_x, inner_y, inner_size, inner_size,
-        size // 12, size // 12,
-    )
-    painter.end()
-    return QIcon(pix)
 
 
 class AppController(QObject):
@@ -48,7 +20,7 @@ class AppController(QObject):
     engine_stopped = Signal()
     quit_requested = Signal()
 
-    def __init__(self, qt_app: QApplication, workdir: Path):
+    def __init__(self, qt_app, workdir: Path):
         super().__init__()
         self.qt_app = qt_app
         self.workdir = workdir
@@ -58,8 +30,7 @@ class AppController(QObject):
         self._engine_task: Optional[asyncio.Task] = None
         self._vm: Optional[MainViewModel] = None
         self._window: Optional[MainWindow] = None
-        self._tray: Optional[QSystemTrayIcon] = None
-        self._qt_poll_timer: Optional[QTimer] = None
+        self._tray: Optional[TrayApp] = None
 
     # -------- Lifecycle --------
 
@@ -77,12 +48,9 @@ class AppController(QObject):
             on_quit=self._handle_quit,
         )
         self._setup_tray()
-        self._window.show()
         self._start_async_loop_on_thread()
 
     def _start_async_loop_on_thread(self):
-        import threading
-
         loop = asyncio.new_event_loop()
         self._loop = loop
 
@@ -106,69 +74,17 @@ class AppController(QObject):
         thread = threading.Thread(target=run_loop, daemon=True)
         thread.start()
 
-        # Qt -> asyncio: use a QTimer to periodically tick Qt while asyncio runs
-        # Asyncio -> Qt: use QMetaObject.invokeMethod / queued connections
-        self._qt_poll_timer = QTimer(self.qt_app)
-        self._qt_poll_timer.setInterval(30)
-        self._qt_poll_timer.timeout.connect(self._tick_qt)
-        self._qt_poll_timer.start()
-
-    def _tick_qt(self):
-        pass
-
     def _setup_tray(self):
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            self._tray = None
-            return
-        icon = make_tray_icon()
-        tray = QSystemTrayIcon(icon, self.qt_app)
-        tray.setToolTip("iTrader 交易客户端")
-
-        menu = QMenu()
-
-        show_action = QAction("显示主窗口", menu)
-        show_action.triggered.connect(self._show_window)
-        menu.addAction(show_action)
-
-        hide_action = QAction("隐藏主窗口", menu)
-        hide_action.triggered.connect(self._hide_window)
-        menu.addAction(hide_action)
-
-        menu.addSeparator()
-
-        start_action = QAction("启动自动交易", menu)
-        start_action.triggered.connect(self._handle_start)
-        menu.addAction(start_action)
-
-        stop_action = QAction("停止自动交易", menu)
-        stop_action.triggered.connect(self._handle_stop)
-        menu.addAction(stop_action)
-
-        menu.addSeparator()
-
-        config_action = QAction("配置设置...", menu)
-        config_action.triggered.connect(self._handle_open_config)
-        menu.addAction(config_action)
-
-        menu.addSeparator()
-
-        quit_action = QAction("退出", menu)
-        quit_action.triggered.connect(self._handle_quit)
-        menu.addAction(quit_action)
-
-        tray.setContextMenu(menu)
-        tray.activated.connect(self._on_tray_activated)
-        tray.show()
-        self._tray = tray
-
-    def _on_tray_activated(self, reason):
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
-            if self._window is None:
-                return
-            if self._window.isVisible():
-                self._hide_window()
-            else:
-                self._show_window()
+        self._tray = TrayApp(
+            self.qt_app,
+            self._vm,
+            on_start=self._handle_start,
+            on_stop=self._handle_stop,
+            on_show_window=self._show_window,
+            on_open_config=self._handle_open_config,
+            on_show_about=self._handle_show_about,
+            on_quit=self._handle_quit,
+        )
 
     def _show_window(self):
         if self._window is None:
@@ -176,11 +92,6 @@ class AppController(QObject):
         self._window.showNormal()
         self._window.raise_()
         self._window.activateWindow()
-
-    def _hide_window(self):
-        if self._window is None:
-            return
-        self._window.hide()
 
     # -------- Handlers (UI thread) --------
 
@@ -201,10 +112,11 @@ class AppController(QObject):
             self._vm.setAutoTrade(value)
 
     def _handle_open_config(self):
-        if self._vm is None or self._window is None:
+        if self._vm is None:
             return
         current_config = self._vm.config
-        dlg = ConfigDialog(self._window, current_config)
+        parent = self._window if self._window is not None else None
+        dlg = ConfigDialog(parent, current_config)
         if dlg.exec() == ConfigDialog.Accepted and dlg.result_dict is not None:
             data = dlg.result_dict
             new_config = TradingConfiguration(
@@ -260,7 +172,6 @@ class AppController(QObject):
     async def _start_engine(self):
         if self._engine is None:
             self._engine = await self.bootstrap.build_engine()
-        # apply current auto_trade state from VM
         if self._vm is not None:
             self._engine.set_auto_trade(self._vm.autoTrade)
         try:
@@ -294,5 +205,4 @@ class AppController(QObject):
         await self._stop_engine()
         if self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
-        # Schedule UI quit via Qt event loop
         QTimer.singleShot(50, self.qt_app.quit)

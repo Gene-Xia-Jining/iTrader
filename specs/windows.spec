@@ -9,23 +9,11 @@ SRC = os.path.join(ROOT, 'src')
 
 datas = [
     (os.path.join(ROOT, 'config.toml'), '.'),
+    (os.path.join(SRC, 'itrader', 'resources', 'icon.png'), 'itrader/resources'),
 ]
 binaries = []
 
 hiddenimports = [
-    # legacy flat modules (still shipped for backward compat)
-    'db',
-    'server',
-    'trader',
-    'models',
-    'config',
-    'app',
-    'main',
-    'token_manager',
-    'cert_enroll',
-    'pki_client',
-    'main_with_cert',
-    'run_app',
     # clean-architecture itrader package
     'itrader',
     *collect_submodules('itrader'),
