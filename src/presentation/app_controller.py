@@ -14,7 +14,6 @@ from .main_window import ConfigDialog, MainWindow
 from .tray import TrayApp
 from .viewmodels import MainViewModel
 
-
 class AppController(QObject):
     engine_started = Signal()
     engine_stopped = Signal()
@@ -127,10 +126,6 @@ class AppController(QObject):
                 tq_password=data["tq_password"],
                 initial_balance=data["initial_balance"],
                 database_path=current_config.database_path,
-                client_cert_path=current_config.client_cert_path,
-                client_key_path=current_config.client_key_path,
-                ca_cert_path=current_config.ca_cert_path,
-                enrollment_url=current_config.enrollment_url,
             )
             self.bootstrap.save_config(new_config)
             self._vm.update_config(new_config)

@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from ...domain.entities import TradingConfiguration
 
-
 class AppConfigModel(BaseModel):
     server_url: str
     symbols: list[str]
@@ -16,11 +15,6 @@ class AppConfigModel(BaseModel):
     tq_password: str = ""
     initial_balance: float = 10_000_000
     database: str = "data/client.db"
-    client_cert_path: str | None = None
-    client_key_path: str | None = None
-    ca_cert_path: str | None = None
-    enrollment_url: str | None = None
-
 
 class ConfigService:
     def __init__(self, config_path: Path | str = "config.toml"):
@@ -47,10 +41,6 @@ class ConfigService:
                 tq_password=model.tq_password,
                 initial_balance=model.initial_balance,
                 database_path=model.database,
-                client_cert_path=model.client_cert_path,
-                client_key_path=model.client_key_path,
-                ca_cert_path=model.ca_cert_path,
-                enrollment_url=model.enrollment_url,
             )
         return TradingConfiguration(
             server_url="http://localhost:8000",
@@ -73,13 +63,5 @@ class ConfigService:
             "initial_balance": config.initial_balance,
             "database": config.database_path,
         }
-        if config.client_cert_path:
-            data["client_cert_path"] = config.client_cert_path
-        if config.client_key_path:
-            data["client_key_path"] = config.client_key_path
-        if config.ca_cert_path:
-            data["ca_cert_path"] = config.ca_cert_path
-        if config.enrollment_url:
-            data["enrollment_url"] = config.enrollment_url
         with open(self.config_path, "w", encoding="utf-8") as f:
             toml.dump(data, f)

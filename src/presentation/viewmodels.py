@@ -2,8 +2,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Property
-from PySide6.QtGui import QColor
-
 from ..domain.entities import TradingConfiguration
 from ..domain.events import (
     EventBus,

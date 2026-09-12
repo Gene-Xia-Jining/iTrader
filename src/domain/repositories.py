@@ -3,7 +3,6 @@ from typing import Optional
 
 from .entities import TradeCommand, TradeCommandStatus
 
-
 class TradeCommandRepository(ABC):
     @abstractmethod
     async def exists(self, command_id: str) -> bool: ...
@@ -23,7 +22,6 @@ class TradeCommandRepository(ABC):
         order_id: Optional[str] = None,
     ) -> None: ...
 
-
 class TokenStore(ABC):
     @abstractmethod
     def have_token(self) -> bool: ...
@@ -36,21 +34,6 @@ class TokenStore(ABC):
 
     @abstractmethod
     def delete_token(self) -> None: ...
-
-
-class CertificateStore(ABC):
-    @abstractmethod
-    def have_cert(self) -> bool: ...
-
-    @abstractmethod
-    def client_cert_path(self) -> str: ...
-
-    @abstractmethod
-    def client_key_path(self) -> str: ...
-
-    @abstractmethod
-    def ca_cert_path(self) -> str: ...
-
 
 class StrategyStreamClient(ABC):
     @abstractmethod

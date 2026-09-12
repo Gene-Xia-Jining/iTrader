@@ -1,24 +1,27 @@
+import uuid
 from pathlib import Path
 from typing import Optional
 
 from ..domain.entities import TradingConfiguration
 from ..domain.events import EventBus
-from ..domain.repositories import TokenStore, CertificateStore
 from ..infrastructure.api.client import (
     FileTokenStore,
     ServerStreamClient,
     TokenApiService,
-)
-from ..infrastructure.certs.cert_manager import (
-    CertificateEnrollmentService,
-    FileCertificateStore,
-    load_or_generate_client_id,
 )
 from ..infrastructure.config.config_service import ConfigService
 from ..infrastructure.db.repositories import SQLiteTradeCommandRepository
 from ..infrastructure.trading.tqsdk_executor import TqSdkTradingExecutor
 from .trading_engine import TradingEngine, TradingEngineDeps
 
+def load_or_generate_client_id() -> str:
+    id_path = Path("data/client_id.txt")
+    if id_path.exists():
+        return id_path.read_text(encoding="utf-8").strip()
+    client_id = f"client-{uuid.uuid4().hex[:8]}"
+    id_path.parent.mkdir(parents=True, exist_ok=True)
+    id_path.write_text(client_id, encoding="utf-8")
+    return client_id
 
 class Bootstrap:
     def __init__(
@@ -33,8 +36,6 @@ class Bootstrap:
         self._stream_client: Optional[ServerStreamClient] = None
         self._token_store: Optional[FileTokenStore] = None
         self._token_service: Optional[TokenApiService] = None
-        self._cert_store: Optional[FileCertificateStore] = None
-        self._cert_service: Optional[CertificateEnrollmentService] = None
         self._engine: Optional[TradingEngine] = None
 
     @property
@@ -63,28 +64,6 @@ class Bootstrap:
             )
         return self._token_service
 
-    @property
-    def cert_store(self) -> FileCertificateStore:
-        if self._cert_store is None:
-            self._cert_store = FileCertificateStore()
-        return self._cert_store
-
-    @property
-    def cert_service(self) -> CertificateEnrollmentService:
-        if self._cert_service is None:
-            enrollment_url = (
-                self.config.enrollment_url
-                or self.config.server_url.replace(":3080", ":3081")
-            )
-            if not enrollment_url.startswith("https"):
-                enrollment_url = "https://" + enrollment_url.lstrip("http://").lstrip("https://")
-            self._cert_service = CertificateEnrollmentService(
-                enrollment_url=enrollment_url,
-                store=self.cert_store,
-                ca_cert_path=self.config.ca_cert_path or "",
-            )
-        return self._cert_service
-
     async def init_db(self) -> SQLiteTradeCommandRepository:
         if self._trade_repo is None:
             self._trade_repo = SQLiteTradeCommandRepository(self.config.database_path)
@@ -106,9 +85,6 @@ class Bootstrap:
                 server_url=self.config.server_url,
                 symbols=self.config.symbols,
                 token_service=self.token_service,
-                ca_cert_path=self.config.ca_cert_path,
-                client_cert_path=self.config.client_cert_path,
-                client_key_path=self.config.client_key_path,
             )
         return self._stream_client
 
@@ -131,24 +107,3 @@ class Bootstrap:
         self._engine = None
         self._trading_executor = None
         self._stream_client = None
-
-    def ensure_certs_in_config(self) -> bool:
-        cfg = self.config
-        if cfg.client_cert_path and Path(cfg.client_cert_path).exists():
-            return True
-        if self.cert_store.have_cert():
-            self._config = TradingConfiguration(
-                server_url=cfg.server_url,
-                symbols=cfg.symbols,
-                auto_trade=cfg.auto_trade,
-                tq_account=cfg.tq_account,
-                tq_password=cfg.tq_password,
-                initial_balance=cfg.initial_balance,
-                database_path=cfg.database_path,
-                client_cert_path=self.cert_store.client_cert_path(),
-                client_key_path=self.cert_store.client_key_path(),
-                ca_cert_path=self.cert_store.ca_cert_path(),
-                enrollment_url=cfg.enrollment_url,
-            )
-            return True
-        return False

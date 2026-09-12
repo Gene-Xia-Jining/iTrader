@@ -32,7 +32,7 @@ class AsyncQtBridge:
     def run_on_ui(self, fn: Callable[..., Any], *args, **kwargs):
         """Schedule callable to run on Qt UI thread."""
         try:
-            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+            from PySide6.QtCore import QMetaObject, Qt
             QMetaObject.invokeMethod(
                 self.qt_app,
                 lambda: fn(*args, **kwargs),

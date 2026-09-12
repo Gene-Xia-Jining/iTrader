@@ -2,20 +2,17 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 class TradeCommandStatus(str, Enum):
     PENDING = "pending"
     EXECUTING = "executing"
     EXECUTED = "executed"
     FAILED = "failed"
 
-
 class TradeSide(str, Enum):
     BUY = "buy"
     SELL = "sell"
     LONG = "long"
     SHORT = "short"
-
 
 @dataclass
 class StrategySignal:
@@ -25,7 +22,6 @@ class StrategySignal:
     price: float
     position: int
     updated_at: int
-
 
 @dataclass
 class TradeCommand:
@@ -40,7 +36,6 @@ class TradeCommand:
     order_id: Optional[str] = None
     error: Optional[str] = None
 
-
 @dataclass
 class TradingConfiguration:
     server_url: str
@@ -50,7 +45,3 @@ class TradingConfiguration:
     tq_password: str
     initial_balance: float
     database_path: str = "data/client.db"
-    client_cert_path: Optional[str] = None
-    client_key_path: Optional[str] = None
-    ca_cert_path: Optional[str] = None
-    enrollment_url: Optional[str] = None

@@ -1,6 +1,5 @@
 import asyncio
 from dataclasses import dataclass
-from typing import Optional
 
 from ..domain.entities import (
     StrategySignal,
@@ -20,7 +19,6 @@ from ..domain.events import (
     TradingStoppedEvent,
 )
 from ..domain.repositories import (
-    CertificateStore,
     StrategyStreamClient,
     TokenStore,
     TradeCommandRepository,

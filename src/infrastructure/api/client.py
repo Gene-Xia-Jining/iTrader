@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 from pathlib import Path
@@ -9,7 +8,6 @@ import httpx
 from ...domain.entities import StrategySignal
 from ...domain.repositories import StrategyStreamClient
 from ...domain.repositories import TokenStore
-
 
 class FileTokenStore(TokenStore):
     def __init__(self, token_dir: Path | str = "data/tokens"):
@@ -33,7 +31,6 @@ class FileTokenStore(TokenStore):
         if token_path.exists():
             token_path.unlink()
 
-
 class TokenApiService:
     def __init__(self, server_url: str, token_store: TokenStore, client_id: str):
         self.server_url = server_url.rstrip("/")
@@ -48,7 +45,7 @@ class TokenApiService:
                 json={
                     "client_id": self.client_id,
                     "description": description,
-                    "expires_in_days": 30,
+                    "expires_in_days": 90,
                 },
             )
             response.raise_for_status()
@@ -80,31 +77,16 @@ class TokenApiService:
             return {}
         return {"Authorization": f"Bearer {token}"}
 
-
 class ServerStreamClient(StrategyStreamClient):
     def __init__(
         self,
         server_url: str,
         symbols: list[str],
         token_service: TokenApiService | None = None,
-        ca_cert_path: str | None = None,
-        client_cert_path: str | None = None,
-        client_key_path: str | None = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.symbols = symbols
         self.token_service = token_service
-        self.ca_cert_path = ca_cert_path
-        self.client_cert_path = client_cert_path
-        self.client_key_path = client_key_path
-
-    def _make_client(self) -> httpx.AsyncClient:
-        verify = self.ca_cert_path or True
-        cert = None
-        if self.client_cert_path and self.client_key_path:
-            if os.path.exists(self.client_cert_path) and os.path.exists(self.client_key_path):
-                cert = (self.client_cert_path, self.client_key_path)
-        return httpx.AsyncClient(timeout=None, verify=verify, cert=cert)
 
     async def stream(self):
         symbols = ",".join(self.symbols)
@@ -114,7 +96,7 @@ class ServerStreamClient(StrategyStreamClient):
         if self.token_service is not None:
             headers.update(self.token_service.get_auth_headers())
 
-        async with self._make_client() as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream("GET", url, headers=headers) as response:
                 response.raise_for_status()
                 event = None
