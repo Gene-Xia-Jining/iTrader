@@ -34,14 +34,14 @@ class MainWindowUiTest(unittest.TestCase):
 
         window.dashboard_page.auto_trade_checkbox.setChecked(False)
         window.dashboard_page.auto_trade_checkbox.setChecked(True)
-        window.dashboard_page.start_btn.click()
+        window._head_quit_btn.click()
         window.set_token_status("已通过")
         window._append_log("hello", "#a6e3a1")
         window.clear_logs()
         window.resize(900, 600)
         window.resize(1400, 900)
 
-        self.assertEqual(calls, ["toggle:False", "toggle:True", "start"])
+        self.assertEqual(calls, ["toggle:False", "toggle:True", "quit"])
         self.assertTrue(window.token_page.token_status_btn.isEnabled())
         self.assertEqual(window.log_page.log_view.toPlainText(), "")
 

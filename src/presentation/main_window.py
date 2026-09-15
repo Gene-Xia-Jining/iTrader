@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..domain.entities import TradingConfiguration
 from .components import SidebarButton
-from .pages import DashboardPage, LogPage, SettingsPage, TokenPage
+from .pages import DashboardPage, make_button, LogPage, SettingsPage, TokenPage
 from .theme import APP_QSS, status_color
 from .viewmodels import ConfigDialogViewModel, MainViewModel
 
@@ -318,9 +318,34 @@ class MainWindow(QMainWindow):
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        layout = QHBoxLayout(central)
+        layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
+        head = QFrame()
+        head.setObjectName("head")
+        head_layout = QHBoxLayout(head)
+        head_layout.setContentsMargins(20, 14, 20, 14)
+        head_layout.setSpacing(12)
+        brand = QVBoxLayout()
+        brand.setSpacing(2)
+        brand_label = QLabel("iTrader", head)
+        brand_label.setObjectName("title")
+        brand_sub = QLabel("交易客户端", head)
+        brand_sub.setObjectName("subtitle")
+        brand.addWidget(brand_label)
+        brand.addWidget(brand_sub)
+        head_layout.addLayout(brand)
+        head_layout.addStretch(1)
+        self._head_quit_btn = make_button("退出客户端", variant="danger")
+        self._head_quit_btn.clicked.connect(self._on_quit)
+        head_layout.addWidget(self._head_quit_btn)
+        layout.addWidget(head)
+
+        body = QWidget()
+        body_layout = QHBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
@@ -377,7 +402,6 @@ class MainWindow(QMainWindow):
         self.dashboard_page.config_btn.clicked.connect(self._on_open_config)
         self.dashboard_page.token_btn.clicked.connect(lambda: self._switch_page(1))
         self.dashboard_page.clear_logs_btn.clicked.connect(self._on_clear_logs)
-        self.dashboard_page.quit_btn.clicked.connect(self._on_quit)
         self.dashboard_page.start_btn.setEnabled(self._vm.canStart)
         self.dashboard_page.stop_btn.setEnabled(self._vm.canStop)
 
@@ -389,8 +413,9 @@ class MainWindow(QMainWindow):
         self.log_page.clear_logs_btn.clicked.connect(self._on_clear_logs)
         self.settings_page.open_config_btn.clicked.connect(self._on_open_config)
 
-        layout.addWidget(sidebar)
-        layout.addWidget(self.stack, 1)
+        body_layout.addWidget(sidebar)
+        body_layout.addWidget(self.stack, 1)
+        layout.addWidget(body, 1)
 
     def _switch_page(self, index: int):
         self.stack.setCurrentIndex(index)

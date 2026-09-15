@@ -52,8 +52,6 @@ class BasePage(QScrollArea):
 class DashboardPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.header = PageHeader("仪表盘", "查看连接状态、控制自动交易，并快速进入配置与 Token 流程。")
-        self.content_layout.addWidget(self.header)
 
         grid = QGridLayout()
         grid.setSpacing(16)
@@ -108,12 +106,10 @@ class DashboardPage(BasePage):
         self.config_btn = make_button("配置设置", variant="secondary")
         self.token_btn = make_button("Token 管理", variant="secondary")
         self.clear_logs_btn = make_button("清空日志", variant="secondary")
-        self.quit_btn = make_button("退出客户端", variant="danger")
         quick_layout.addWidget(quick_title, 0, 0, 1, 3)
         quick_layout.addWidget(self.config_btn, 1, 0)
         quick_layout.addWidget(self.token_btn, 1, 1)
         quick_layout.addWidget(self.clear_logs_btn, 1, 2)
-        quick_layout.addWidget(self.quit_btn, 2, 0, 1, 3)
         grid.addWidget(quick_card, 2, 0, 1, 2)
 
         self.content_layout.addLayout(grid)
