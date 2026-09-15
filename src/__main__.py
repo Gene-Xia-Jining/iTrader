@@ -12,6 +12,7 @@ def run_gui():
 
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QFont
+    from src.presentation.theme import APP_FONT_FAMILY
 
     qt_app = QApplication.instance() or QApplication(sys.argv)
     qt_app.setApplicationName("iTrader")
@@ -20,6 +21,7 @@ def run_gui():
 
     default_font = QFont()
     default_font.setPointSize(13)
+    default_font.setFamily(APP_FONT_FAMILY)
     qt_app.setFont(default_font)
 
     from src.presentation.app_controller import AppController
