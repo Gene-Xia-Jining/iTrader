@@ -246,6 +246,7 @@ class MainWindow(QMainWindow):
         on_stop,
         on_toggle_auto_trade,
         on_open_config,
+        on_open_token,
         on_clear_logs,
         on_show_about,
         on_quit,
@@ -257,6 +258,7 @@ class MainWindow(QMainWindow):
         self._on_stop = on_stop
         self._on_toggle_auto_trade = on_toggle_auto_trade
         self._on_open_config = on_open_config
+        self._on_open_token = on_open_token
         self._on_clear_logs = on_clear_logs
         self._on_show_about = on_show_about
         self._on_quit = on_quit
@@ -282,6 +284,9 @@ class MainWindow(QMainWindow):
         open_config_action.setShortcut("Ctrl+,")
         open_config_action.triggered.connect(self._on_open_config)
         file_menu.addAction(open_config_action)
+        open_token_action = QAction("Token 申请与审批...", self)
+        open_token_action.triggered.connect(self._on_open_token)
+        file_menu.addAction(open_token_action)
         file_menu.addSeparator()
         quit_action = QAction("退出", self)
         quit_action.setShortcut("Ctrl+Q")
@@ -377,6 +382,33 @@ class MainWindow(QMainWindow):
         self.auto_trade_checkbox.toggled.connect(self._on_toggle_auto_trade)
         left_layout.addWidget(self.auto_trade_checkbox)
 
+        token_group = QGroupBox("Token 申请", left)
+        token_group.setStyleSheet("QGroupBox { border: 1px solid #45475a; border-radius: 8px; margin-top: 12px; padding-top: 18px; }")
+        token_layout = QGridLayout(token_group)
+        token_layout.setContentsMargins(12, 18, 12, 12)
+        token_layout.setHorizontalSpacing(8)
+        token_layout.setVerticalSpacing(8)
+
+        self.token_description_edit = QLineEdit()
+        self.token_description_edit.setPlaceholderText("例如：iTrader GUI Client")
+        self.token_status_label = QLabel("未申请")
+        self.token_status_label.setStyleSheet("color: #f39c12; font-weight: bold;")
+        self.token_apply_btn = QPushButton("申请 Token")
+        self.token_refresh_btn = QPushButton("刷新状态")
+        self.token_status_btn = QPushButton("查看状态")
+        self.token_status_btn.setEnabled(False)
+
+        self.token_apply_btn.clicked.connect(self._on_apply_token)
+        self.token_refresh_btn.clicked.connect(self._on_refresh_token)
+        self.token_status_btn.clicked.connect(lambda: QMessageBox.information(self, "Token 审批状态", self.token_status_label.text()))
+
+        token_layout.addWidget(self.token_description_edit, 0, 0, 1, 2)
+        token_layout.addWidget(self.token_status_label, 1, 0, 1, 2)
+        token_layout.addWidget(self.token_apply_btn, 2, 0)
+        token_layout.addWidget(self.token_refresh_btn, 2, 1)
+        token_layout.addWidget(self.token_status_btn, 3, 0, 1, 2)
+        left_layout.addWidget(token_group)
+
         left_layout.addStretch(1)
 
         # Config quick button
@@ -386,6 +418,13 @@ class MainWindow(QMainWindow):
         )
         config_btn.clicked.connect(self._on_open_config)
         left_layout.addWidget(config_btn)
+
+        # Quit button
+        self.quit_btn = QPushButton("退出客户端")
+        self.quit_btn.setObjectName("danger")
+        self.quit_btn.setMinimumHeight(40)
+        self.quit_btn.clicked.connect(self._on_quit)
+        left_layout.addWidget(self.quit_btn)
 
         # Right log panel
         right = QGroupBox("交易日志", splitter)
@@ -438,6 +477,20 @@ class MainWindow(QMainWindow):
     def _on_trade_status_color_changed(self, color: str):
         self.trade_status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
+    def set_token_status(self, text: str):
+        self.token_status_label.setText(text)
+        color = "#2ecc71" if "已通过" in text else "#e74c3c" if "失败" in text else "#f39c12"
+        self.token_status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        if "已通过" in text:
+            self.token_status_btn.setEnabled(True)
+
+    def _on_apply_token(self):
+        description = self.token_description_edit.text().strip() or "iTrader Client"
+        self._on_open_token(description)
+
+    def _on_refresh_token(self):
+        self._on_open_token("")
+
     def _on_auto_trade_changed(self, value: bool):
         if self.auto_trade_checkbox.isChecked() != value:
             self.auto_trade_checkbox.blockSignals(True)
@@ -464,6 +517,9 @@ class MainWindow(QMainWindow):
 
     def clear_logs(self):
         self.log_view.clear()
+
+    def save_approved_token(self, data: dict):
+        QMessageBox.information(self, "Token 已保存", "Token 已保存到本地，可启动自动交易。")
 
     def show_about(self):
         QMessageBox.information(

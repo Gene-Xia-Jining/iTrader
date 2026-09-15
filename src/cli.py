@@ -1,8 +1,9 @@
 import asyncio
+import os
 import sys
+from pathlib import Path
 
 from .application.bootstrap import Bootstrap
-from .application.async_bridge import prepare_workdir
 from .domain.events import LogEvent, LogLevel
 
 async def _ensure_token(bs: Bootstrap, request_input) -> bool:
@@ -17,7 +18,11 @@ async def _ensure_token(bs: Bootstrap, request_input) -> bool:
     return bool(token)
 
 async def run_headless():
-    prepare_workdir()
+    if getattr(sys, "frozen", False):
+        workdir = Path.home() / ".iTrader"
+        workdir.mkdir(parents=True, exist_ok=True)
+        os.chdir(workdir)
+    Path("data").mkdir(parents=True, exist_ok=True)
     bs = Bootstrap()
 
     await _ensure_token(bs, input)

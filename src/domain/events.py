@@ -80,8 +80,10 @@ class EventBus:
             for handler in self._handlers[event_type]:
                 try:
                     handler(event)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import traceback
+                    print(f"Error publishing {event}: {e}", file=sys.stderr)
+                    traceback.print_exc()
 
     async def publish_async(self, event):
         event_type = type(event)
@@ -91,5 +93,7 @@ class EventBus:
                     result = handler(event)
                     if hasattr(result, "__await__"):
                         await result
-                except Exception:
-                    pass
+                except Exception as e:
+                    import traceback
+                    print(f"Error publishing async {event}: {e}", file=sys.stderr)
+                    traceback.print_exc()

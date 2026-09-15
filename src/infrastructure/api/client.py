@@ -37,7 +37,8 @@ class TokenApiService:
         self.token_store = token_store
         self.client_id = client_id
 
-    async def request_new_token(self, description: str = "") -> str:
+    async def request_token(self, description: str = "") -> dict:
+        """Request a token approval; pending tokens are not saved."""
         url = f"{self.server_url}/api/tokens/create"
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -49,10 +50,23 @@ class TokenApiService:
                 },
             )
             response.raise_for_status()
-            data = response.json()
-            token = data["token"]
-            self.token_store.save_token(token)
-            return token
+            return response.json()
+
+    async def get_token_requests(self) -> dict:
+        url = f"{self.server_url}/api/tokens/requests/{self.client_id}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+
+    async def load_approved_token(self, requests: dict) -> Optional[str]:
+        for request in requests.get("tokens", requests.get("requests", [])):
+            if request.get("status") == "approved" and request.get("token"):
+                self.token_store.save_token(request["token"])
+                return request["token"]
+        return None
+
+    approved_token = load_approved_token
 
     async def validate_token(self, token: str) -> bool:
         url = f"{self.server_url}/api/tokens/validate"

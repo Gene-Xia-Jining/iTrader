@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QMetaObject, Qt, QTimer, Signal, Slot
 
 from ..application.bootstrap import Bootstrap
 from ..application.trading_engine import TradingEngine
@@ -18,6 +18,7 @@ class AppController(QObject):
     engine_started = Signal()
     engine_stopped = Signal()
     quit_requested = Signal()
+    token_status_changed = Signal(str)
 
     def __init__(self, qt_app, workdir: Path):
         super().__init__()
@@ -30,6 +31,7 @@ class AppController(QObject):
         self._vm: Optional[MainViewModel] = None
         self._window: Optional[MainWindow] = None
         self._tray: Optional[TrayApp] = None
+        self.token_status_changed.connect(self._on_token_status_changed)
 
     # -------- Lifecycle --------
 
@@ -42,6 +44,7 @@ class AppController(QObject):
             on_stop=self._handle_stop,
             on_toggle_auto_trade=self._handle_toggle_auto_trade,
             on_open_config=self._handle_open_config,
+            on_open_token=self._handle_open_token,
             on_clear_logs=self._handle_clear_logs,
             on_show_about=self._handle_show_about,
             on_quit=self._handle_quit,
@@ -88,9 +91,12 @@ class AppController(QObject):
     def _show_window(self):
         if self._window is None:
             return
-        self._window.showNormal()
-        self._window.raise_()
-        self._window.activateWindow()
+        if self._window.isVisible():
+            self._window.hide()
+        else:
+            self._window.showNormal()
+            self._window.raise_()
+            self._window.activateWindow()
 
     # -------- Handlers (UI thread) --------
 
@@ -103,6 +109,11 @@ class AppController(QObject):
         if self._engine is None:
             return
         self._run_async(self._stop_engine())
+
+    def _handle_open_token(self, description: str = ""):
+        self._run_async(self._refresh_token_status())
+        if description:
+            self._run_async(self._request_token(description))
 
     def _handle_toggle_auto_trade(self, value: bool):
         if self._engine is not None:
@@ -164,6 +175,43 @@ class AppController(QObject):
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return fut
 
+    def _on_token_status_changed(self, status: str):
+        if self._window is not None:
+            self._window.set_token_status(status)
+
+    async def _refresh_token_status(self):
+        try:
+            data = await self.bootstrap.token_service.get_token_requests()
+            status = "待审核"
+            for request in data.get("tokens", data.get("requests", [])):
+                if request.get("status") == "approved":
+                    token = await self.bootstrap.token_service.load_approved_token(data)
+                    if token:
+                        status = f"已通过，已保存到 {self.bootstrap.token_store.token_dir}"
+                    else:
+                        status = "已通过，但服务器未返回 token"
+                    break
+            self.token_status_changed.emit(status)
+        except Exception as e:
+            self.token_status_changed.emit(f"查询失败: {e}")
+
+    async def _request_token(self, description: str):
+        try:
+            await self.bootstrap.token_service.request_token(description or "iTrader Client")
+            self.token_status_changed.emit("已提交申请，等待服务器审核")
+            QTimer.singleShot(1500, lambda: self._run_async(self._refresh_token_status()))
+        except Exception as e:
+            self.token_status_changed.emit(f"申请失败: {e}")
+
+    def save_approved_token(self, data: dict):
+        async def _save():
+            try:
+                token = await self.bootstrap.token_service.load_approved_token(data)
+                self.token_status_changed.emit(f"已通过，已保存到 {self.bootstrap.token_store.token_dir}" if token else "已通过，但服务器未返回 token")
+            except Exception as e:
+                self.token_status_changed.emit(f"保存 token 失败: {e}")
+        self._run_async(_save())
+
     async def _start_engine(self):
         if self._engine is None:
             self._engine = await self.bootstrap.build_engine()
@@ -196,8 +244,14 @@ class AppController(QObject):
             self._engine_task = None
             self.engine_stopped.emit()
 
+    @Slot()
+    def do_quit(self):
+        self.qt_app.quit()
+
     async def _shutdown(self):
         await self._stop_engine()
         if self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
-        QTimer.singleShot(50, self.qt_app.quit)
+        # _shutdown 运行在 asyncio 线程，QTimer.singleShot 的定时器没有事件循环可驱动，
+        # 必须把退出动作排队到 UI 线程
+        QMetaObject.invokeMethod(self, "do_quit", Qt.QueuedConnection)

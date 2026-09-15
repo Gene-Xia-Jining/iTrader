@@ -1,15 +1,7 @@
-server_url = "http://192.168.1.100:8000"
-
-symbols = [
-    "SHFE.au2510",
-    "INE.sc2510"
-]
-
+server_url = "http://192.168.100.100:3080"
+symbols = [ "SHFE.au2510", "INE.sc2510",]
 auto_trade = true
-
 tq_account = "YOUR_ACCOUNT"
 tq_password = "YOUR_PASSWORD"
-
-initial_balance = 10000000
-
+initial_balance = 10000000.0
 database = "data/client.db"

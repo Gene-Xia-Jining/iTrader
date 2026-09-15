@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .viewmodels import MainViewModel
@@ -58,9 +58,9 @@ def make_tray_icon() -> QIcon:
 class TrayApp(QObject):
     """System tray icon with a status menu.
 
-    Left-click (or double-click) on the tray icon pops up the menu, which
-    shows live server / trading status and offers start, stop, show window,
-    config, about and quit actions.
+    Left-click (or double-click) on the tray icon shows the main window;
+    right-click pops up the menu with start, stop, config, about and quit
+    actions.
     """
 
     def __init__(
@@ -77,13 +77,14 @@ class TrayApp(QObject):
         super().__init__()
         self._qt_app = qt_app
         self._vm = vm
+        self._on_show_window = on_show_window
+        self._menu: Optional[QMenu] = None
         self._tray: Optional[QSystemTrayIcon] = None
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
 
         self._tray = QSystemTrayIcon(make_tray_icon(), qt_app)
-        self._tray.setToolTip("iTrader 交易客户端")
 
         self._build_menu(
             on_start, on_stop, on_show_window, on_open_config, on_show_about, on_quit
@@ -106,6 +107,7 @@ class TrayApp(QObject):
         on_quit: Callable[[], None],
     ) -> None:
         menu = QMenu()
+        self._menu = menu
 
         self._server_status_action = QAction(menu)
         self._server_status_action.setEnabled(False)
@@ -127,7 +129,7 @@ class TrayApp(QObject):
 
         menu.addSeparator()
 
-        show_action = QAction("显示主窗口", menu)
+        show_action = QAction("显示/隐藏主窗口", menu)
         show_action.triggered.connect(on_show_window)
         menu.addAction(show_action)
 
@@ -145,7 +147,7 @@ class TrayApp(QObject):
         quit_action.triggered.connect(on_quit)
         menu.addAction(quit_action)
 
-        self._tray.setContextMenu(menu)
+        menu.setParent(None)
 
     # -------- Status binding --------
 
@@ -166,5 +168,6 @@ class TrayApp(QObject):
 
     def _on_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
-            if self._tray is not None:
-                self._tray.showContextMenu()
+            self._on_show_window()
+        elif reason == QSystemTrayIcon.ContextMenu:
+            self._menu.popup(QCursor.pos())

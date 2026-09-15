@@ -4,9 +4,8 @@ from pathlib import Path
 
 
 def run_gui():
-    workdir = Path.cwd()
+    workdir = Path.home() / ".iTrader"
     if getattr(sys, "frozen", False):
-        workdir = Path.home() / ".itrader"
         workdir.mkdir(parents=True, exist_ok=True)
         os.chdir(workdir)
         Path("data").mkdir(parents=True, exist_ok=True)

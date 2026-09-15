@@ -21,8 +21,7 @@ hiddenimports = [
     'httpx',
     'pydantic',
     'toml',
-    'tomllib',
-    'cryptography',
+    # 'tomllib',  # Python 3.11+ stdlib, not needed as hiddenimport
     'PySide6',
     'PySide6.QtCore',
     'PySide6.QtGui',
@@ -30,8 +29,12 @@ hiddenimports = [
     'shiboken6',
 ]
 
-# tqsdk 包含运行时必需的数据文件（web 页面等），需一并收集
-tq_datas, tq_binaries, tq_hiddenimports = collect_all('tqsdk')
+# tqsdk 运行时必需数据（含 expired_quotes.json.lzma）。
+# 过滤掉交互 Web 前端与示例：本客户端只走 TqApi/TargetPosTask 下单路径，
+# 不启动 tqsdk 的 Web 服务，web/ 与 demo/ 永远不会被读取。
+_tq_datas, tq_binaries, tq_hiddenimports = collect_all('tqsdk')
+_drop = ('tqsdk/web', 'tqsdk/demo')
+tq_datas = [d for d in _tq_datas if not d[1].startswith(_drop)]
 datas += tq_datas
 binaries += tq_binaries
 hiddenimports += tq_hiddenimports

@@ -1,7 +1,5 @@
 import asyncio
 
-from tqsdk import TqApi, TqSim, TqAuth, TargetPosTask
-
 from ...domain.services import TradingExecutor
 
 
@@ -12,14 +10,25 @@ class TqSdkTradingExecutor(TradingExecutor):
         password: str,
         initial_balance: float,
     ):
-        self.api = TqApi(
-            TqSim(init_balance=initial_balance),
-            auth=TqAuth(account, password),
-        )
+        self._account = account
+        self._password = password
+        self._initial_balance = initial_balance
+        self._api = None
         self.tasks: dict[str, TargetPosTask] = {}
+
+    @property
+    def api(self):
+        if self._api is None:
+            from tqsdk import TqApi, TqSim, TqAuth
+            self._api = TqApi(
+                TqSim(init_balance=self._initial_balance),
+                auth=TqAuth(self._account, self._password),
+            )
+        return self._api
 
     def _get_task(self, symbol: str) -> TargetPosTask:
         if symbol not in self.tasks:
+            from tqsdk import TargetPosTask
             self.tasks[symbol] = TargetPosTask(
                 self.api,
                 symbol,
@@ -33,4 +42,7 @@ class TqSdkTradingExecutor(TradingExecutor):
         await asyncio.to_thread(self.api.wait_update)
 
     async def close(self) -> None:
-        self.api.close()
+        if self._api is not None:
+            self._api.close()
+            self._api = None
+            self.tasks.clear()
