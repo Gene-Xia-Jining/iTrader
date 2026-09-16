@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import httpx
 
@@ -9,7 +9,7 @@ from ...domain.repositories import StrategyStreamClient
 from ...domain.repositories import TokenStore
 
 class FileTokenStore(TokenStore):
-    def __init__(self, token_dir: Path | str = "data/tokens"):
+    def __init__(self, token_dir: Union[Path, str] = "data/tokens"):
         self.token_dir = Path(token_dir)
         self.token_dir.mkdir(parents=True, exist_ok=True)
 
@@ -95,7 +95,7 @@ class ServerStreamClient(StrategyStreamClient):
         self,
         server_url: str,
         symbols: list[str],
-        token_service: TokenApiService | None = None,
+        token_service: Union[TokenApiService, None] = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.symbols = symbols

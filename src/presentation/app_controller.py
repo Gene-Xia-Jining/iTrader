@@ -3,7 +3,8 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, QMetaObject, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEventLoop, QObject, QMetaObject, Qt, QTimer, Signal, Slot
+from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
 from ..application.bootstrap import Bootstrap
 from ..application.trading_engine import TradingEngine
@@ -45,6 +46,7 @@ class AppController(QObject):
             on_clear_logs=self._handle_clear_logs,
             on_show_about=self._handle_show_about,
             on_quit=self._handle_quit,
+            on_save_config=self._handle_save_config,
         )
         self._setup_tray()
         self._start_async_loop_on_thread()
@@ -95,16 +97,6 @@ class AppController(QObject):
 
     # -------- Handlers (UI thread) --------
 
-    def _handle_start(self):
-        if self._engine is not None and self._engine.is_running:
-            return
-        self._run_async(self._start_engine())
-
-    def _handle_stop(self):
-        if self._engine is None:
-            return
-        self._run_async(self._stop_engine())
-
     def _handle_open_token(self, description: str = ""):
         self._run_async(self._refresh_token_status())
         if description:
@@ -119,9 +111,47 @@ class AppController(QObject):
     def _handle_toggle_trading(self, value: bool):
         self._handle_toggle_auto_trade(value)
         if value:
-            self._handle_start()
+            self._run_async(self._start_engine())
         else:
-            self._handle_stop()
+            self._run_async(self._stop_engine())
+        if self._window is not None and self._vm is not None:
+            self._show_blocking_toggle(lambda: self._vm.tradingActive == value)
+
+    def _show_blocking_toggle(self, finished) -> None:
+        """阻塞式提示框：等待切换完成后自动消失。"""
+        dlg = QDialog(self._window)
+        dlg.setWindowTitle("自动交易")
+        dlg.setModal(True)
+        dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowStaysOnTopHint)
+        layout = QVBoxLayout(dlg)
+        label = QLabel("正在切换...")
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+        dlg.setFixedWidth(220)
+
+        loop = QEventLoop()
+        timer = QTimer(dlg)
+        timer.setInterval(50)
+        timeout = QTimer(dlg)
+        timeout.setSingleShot(True)
+        timeout.setInterval(30000)
+
+        def done() -> None:
+            timer.stop()
+            timeout.stop()
+            dlg.close()
+            loop.quit()
+
+        def check() -> None:
+            if finished():
+                done()
+
+        timer.timeout.connect(check)
+        timeout.timeout.connect(done)
+        dlg.show()
+        timer.start()
+        timeout.start()
+        loop.exec()
 
     def _handle_open_config(self):
         if self._vm is None:
@@ -153,6 +183,34 @@ class AppController(QObject):
                 self.bootstrap.event_bus.publish(
                     LogEvent(message="配置已保存", level=LogLevel.INFO)
                 )
+
+    def _handle_save_config(self, data: dict):
+        """Handle saving configuration from the embedded settings page"""
+        if self._vm is None:
+            return
+        current_config = self._vm.config
+        new_config = TradingConfiguration(
+            server_url=data["server_url"],
+            symbols=data["symbols"],
+            auto_trade=data["auto_trade"],
+            tq_account=data["tq_account"],
+            tq_password=data["tq_password"],
+            initial_balance=data["initial_balance"],
+            database_path=current_config.database_path,
+        )
+        self.bootstrap.save_config(new_config)
+        self._vm.update_config(new_config)
+        self.bootstrap.event_bus.publish(ConfigChangedEvent())
+        if self._engine is not None and self._engine.is_running:
+            self.bootstrap.event_bus.publish(
+                LogEvent(message="配置已更新（下次启动生效）", level=LogLevel.WARNING)
+            )
+        else:
+            self.bootstrap.reset_engine()
+            self._engine = None
+            self.bootstrap.event_bus.publish(
+                LogEvent(message="配置已保存", level=LogLevel.INFO)
+            )
 
     def _handle_clear_logs(self):
         if self._window is not None:

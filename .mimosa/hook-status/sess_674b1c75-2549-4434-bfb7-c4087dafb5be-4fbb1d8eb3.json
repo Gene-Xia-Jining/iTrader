@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-09-16T02:43:58.190Z",
+  "sessionId": "sess_674b1c75-2549-4434-bfb7-c4087dafb5be",
+  "event": "PreToolUse",
+  "toolName": "Write",
+  "file": "src/presentation/pages.py",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 693,
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "PreToolUse",
+    "outcome": "complete",
+    "latencyMs": 693,
+    "peakMemoryBytes": 201719808,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 1,
+    "cache": {
+      "hits": 0,
+      "misses": 1,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "hostState": "hook_complete_waiting_host_tool_decision",
+  "reportHint": ".mimosa/reports/"
+}

@@ -1,5 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass
+from typing import Optional
 
 class TradeCommandStatus(str, Enum):
     PENDING = "pending"

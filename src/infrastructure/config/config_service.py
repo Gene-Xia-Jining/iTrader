@@ -1,7 +1,8 @@
 from pathlib import Path
 import sys
+import toml
 import tomllib
-from typing import Any
+from typing import Any, Union
 
 from pydantic import BaseModel
 
@@ -17,7 +18,7 @@ class AppConfigModel(BaseModel):
     database: str = "data/client.db"
 
 class ConfigService:
-    def __init__(self, config_path: Path | str = "config.toml"):
+    def __init__(self, config_path: Union[Path, str] = "config.toml"):
         self.config_path = Path(config_path)
 
     def _resolve_bundled_path(self) -> Path:

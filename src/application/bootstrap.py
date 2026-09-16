@@ -1,6 +1,6 @@
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from ..domain.entities import TradingConfiguration
 from ..domain.events import EventBus
@@ -26,7 +26,7 @@ def load_or_generate_client_id() -> str:
 class Bootstrap:
     def __init__(
         self,
-        config_path: str | Path = "config.toml",
+        config_path: Union[Path, str] = "config.toml",
     ):
         self.config_service = ConfigService(config_path)
         self.event_bus = EventBus()

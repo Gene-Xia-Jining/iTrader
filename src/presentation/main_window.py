@@ -248,6 +248,7 @@ class MainWindow(QMainWindow):
         on_clear_logs,
         on_show_about,
         on_quit,
+        on_save_config,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -258,6 +259,7 @@ class MainWindow(QMainWindow):
         self._on_clear_logs = on_clear_logs
         self._on_show_about = on_show_about
         self._on_quit = on_quit
+        self._on_save_config = on_save_config
 
         self.setWindowTitle("iTrader 智能交易客户端")
         self.resize(1180, 760)
@@ -363,11 +365,13 @@ class MainWindow(QMainWindow):
         self.token_page = TokenPage()
         self.log_page = LogPage()
         self.settings_page = SettingsPage()
+        # Connect settings page save callback
+        self.settings_page.on_save = self._on_save_config
         for page in (self.dashboard_page, self.token_page, self.log_page, self.settings_page):
             self.stack.addWidget(page)
         self.stack.setCurrentIndex(0)
 
-        self.dashboard_page.config_btn.clicked.connect(self._on_open_config)
+        self.dashboard_page.config_btn.clicked.connect(lambda: self._switch_page(3))
         self.dashboard_page.token_btn.clicked.connect(lambda: self._switch_page(1))
         self.dashboard_page.clear_logs_btn.clicked.connect(self._on_clear_logs)
 
@@ -377,7 +381,8 @@ class MainWindow(QMainWindow):
         self.token_page.token_status_btn.setEnabled(False)
 
         self.log_page.clear_logs_btn.clicked.connect(self._on_clear_logs)
-        self.settings_page.open_config_btn.clicked.connect(self._on_open_config)
+        # Settings page now uses embedded form, no open_config_btn
+        # self.settings_page.open_config_btn.clicked.connect(self._on_open_config)
 
         body_layout.addWidget(sidebar)
         body_layout.addWidget(self.stack, 1)

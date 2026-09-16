@@ -28,6 +28,7 @@ class MainWindowUiTest(unittest.TestCase):
             on_clear_logs=lambda: calls.append("clear"),
             on_show_about=lambda: calls.append("about"),
             on_quit=lambda: calls.append("quit"),
+            on_save_config=lambda data: calls.append(f"save:{data}"),
         )
 
         window._head_quit_btn.click()
@@ -53,6 +54,7 @@ class MainWindowUiTest(unittest.TestCase):
             on_clear_logs=lambda: calls.append("clear"),
             on_show_about=lambda: calls.append("about"),
             on_quit=lambda: calls.append("quit"),
+            on_save_config=lambda data: calls.append(f"save:{data}"),
         )
 
         # 引擎未运行时按钮显示"关"，即使配置里 auto_trade=True

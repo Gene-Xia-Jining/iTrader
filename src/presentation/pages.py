@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Optional, Callable
+from PySide6.QtWidgets import QMessageBox
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QCheckBox,
 )
 
 from .. import __version__
@@ -168,27 +170,100 @@ class LogPage(BasePage):
 class SettingsPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.header = PageHeader("设置", "配置修改沿用现有 Preferences 对话框，保存后下次启动生效。")
+        self.header = PageHeader("设置", "直接修改配置，保存后即时生效。")
         self.content_layout.addWidget(self.header)
 
         card = Card()
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
-        layout.addWidget(QLabel("设置项包括服务器地址、天勤账号、初始资金、交易品种和自动交易开关。", card))
-        self.open_config_btn = make_button("打开配置设置")
-        layout.addWidget(self.open_config_btn, 0, Qt.AlignLeft)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
+
+        self.server_url_edit = QLineEdit()
+        self.server_url_edit.setPlaceholderText("http://localhost:8000")
+        form.addRow("服务器地址:", self.server_url_edit)
+
+        self.tq_account_edit = QLineEdit()
+        self.tq_account_edit.setPlaceholderText("天勤账号")
+        form.addRow("天勤账号:", self.tq_account_edit)
+
+        self.tq_password_edit = QLineEdit()
+        self.tq_password_edit.setPlaceholderText("天勤密码")
+        self.tq_password_edit.setEchoMode(QLineEdit.Password)
+        form.addRow("天勤密码:", self.tq_password_edit)
+
+        self.balance_edit = QLineEdit()
+        self.balance_edit.setPlaceholderText("10000000")
+        form.addRow("初始资金:", self.balance_edit)
+
+        self.symbols_edit = QLineEdit()
+        self.symbols_edit.setPlaceholderText("品种1,品种2,...")
+        form.addRow("交易品种:", self.symbols_edit)
+
+        self.auto_trade_checkbox = QCheckBox("启用自动交易")
+        form.addRow("", self.auto_trade_checkbox)
+
+        layout.addLayout(form)
+
+        self.save_btn = make_button("保存", variant="primary")
+        layout.addWidget(self.save_btn, 0, Qt.AlignRight)
+        self.save_btn.clicked.connect(self._on_save_clicked)
+
         layout.addStretch(1)
         self.content_layout.addWidget(card)
 
-        info_card = Card()
-        info_layout = QFormLayout(info_card)
-        info_layout.setContentsMargins(16, 16, 16, 16)
-        info_layout.setLabelAlignment(Qt.AlignRight)
-        info_layout.setHorizontalSpacing(12)
-        info_layout.setVerticalSpacing(10)
-        info_layout.addRow("应用版本:", QLabel(__version__, info_card))
-        info_layout.addRow("架构:", QLabel("Clean Architecture + PySide6", info_card))
-        info_layout.addRow("平台:", QLabel("macOS / Windows", info_card))
-        self.content_layout.addWidget(info_card)
-        self.add_stretch()
+        # Fix: setContentsMargins must have 4 parameters
+        # We'll set it in the BasePage, but ensure we don't have extra parameters
+        # The BasePage already sets it correctly.
+
+        # For compatibility, we keep the on_save callback to be set externally
+        self.on_save = None  # type: Optional[Callable[[dict], None]]
+
+        self.content_layout.addStretch(1)
+
+    def _on_save_clicked(self):
+        # Collect data
+        data = {
+            "server_url": self.server_url_edit.text().strip(),
+            "tq_account": self.tq_account_edit.text().strip(),
+            "tq_password": self.tq_password_edit.text(),
+            "initial_balance": self.balance_edit.text().strip(),
+            "symbols": self.symbols_edit.text().strip(),
+            "auto_trade": self.auto_trade_checkbox.isChecked(),
+        }
+
+        # Validate
+        if not data["server_url"]:
+            QMessageBox.warning(self, "输入错误", "服务器地址不能为空")
+            return
+        if not data["tq_account"]:
+            QMessageBox.warning(self, "输入错误", "天勤账号不能为空")
+            return
+        if not data["tq_password"]:
+            QMessageBox.warning(self, "输入错误", "天勤密码不能为空")
+            return
+        if not data["initial_balance"]:
+            QMessageBox.warning(self, "输入错误", "初始资金不能为空")
+            return
+        try:
+            balance = float(data["initial_balance"])
+            if balance <= 0:
+                raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "输入错误", "初始资金必须是正数")
+            return
+        if not data["symbols"]:
+            QMessageBox.warning(self, "输入错误", "交易品种不能为空")
+            return
+
+        # Call the external save callback
+        if self.on_save:
+            self.on_save(data)
+            QMessageBox.information(self, "保存成功", "配置已保存并生效")
+        else:
+            QMessageBox.warning(self, "错误", "保存回调未设置")

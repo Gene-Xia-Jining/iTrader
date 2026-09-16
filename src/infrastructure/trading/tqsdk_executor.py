@@ -14,7 +14,7 @@ class TqSdkTradingExecutor(TradingExecutor):
         self._password = password
         self._initial_balance = initial_balance
         self._api = None
-        self.tasks: dict[str, TargetPosTask] = {}
+        self.tasks: dict[str, 'TargetPosTask'] = {}
 
     @property
     def api(self):
@@ -26,7 +26,7 @@ class TqSdkTradingExecutor(TradingExecutor):
             )
         return self._api
 
-    def _get_task(self, symbol: str) -> TargetPosTask:
+    def _get_task(self, symbol: str) -> 'TargetPosTask':
         if symbol not in self.tasks:
             from tqsdk import TargetPosTask
             self.tasks[symbol] = TargetPosTask(
