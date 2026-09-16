@@ -3,13 +3,11 @@ from typing import Optional
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QFrame,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -19,12 +17,10 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
     QTextEdit,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -267,7 +263,7 @@ class MainWindow(QMainWindow):
         self._on_show_about = on_show_about
         self._on_quit = on_quit
 
-        self.setWindowTitle("iTrader 交易客户端")
+        self.setWindowTitle("iTrader 智能交易客户端")
         self.resize(1180, 760)
         self.setMinimumSize(QSize(960, 620))
         self.setStyleSheet(APP_QSS)
@@ -331,13 +327,18 @@ class MainWindow(QMainWindow):
         brand.setSpacing(2)
         brand_label = QLabel("iTrader", head)
         brand_label.setObjectName("title")
-        brand_sub = QLabel("交易客户端", head)
+        brand_sub = QLabel("智能交易客户端", head)
         brand_sub.setObjectName("subtitle")
         brand.addWidget(brand_label)
         brand.addWidget(brand_sub)
         head_layout.addLayout(brand)
         head_layout.addStretch(1)
-        self._head_quit_btn = make_button("退出客户端", variant="danger")
+        self._head_auto_btn = make_button("", variant="")
+        self._head_auto_btn.setToolTip("点击切换自动交易开/关")
+        self._head_auto_btn.clicked.connect(lambda: self._on_toggle_auto_trade(not self._vm.autoTrade))
+        self._sync_auto_trade_button(self._vm.autoTrade)
+        head_layout.addWidget(self._head_auto_btn)
+        self._head_quit_btn = make_button("退出", variant="danger")
         self._head_quit_btn.clicked.connect(self._on_quit)
         head_layout.addWidget(self._head_quit_btn)
         layout.addWidget(head)
@@ -354,17 +355,6 @@ class MainWindow(QMainWindow):
         sidebar_layout.setContentsMargins(14, 18, 14, 18)
         sidebar_layout.setSpacing(10)
 
-        brand = QVBoxLayout()
-        brand.setSpacing(2)
-        brand_label = QLabel("iTrader", sidebar)
-        brand_label.setObjectName("title")
-        brand_sub = QLabel("交易客户端", sidebar)
-        brand_sub.setObjectName("subtitle")
-        brand.addWidget(brand_label)
-        brand.addWidget(brand_sub)
-        sidebar_layout.addLayout(brand)
-        sidebar_layout.addSpacing(12)
-
         nav = QVBoxLayout()
         nav.setSpacing(6)
         self.dashboard_btn = SidebarButton("仪表盘", sidebar)
@@ -380,11 +370,6 @@ class MainWindow(QMainWindow):
         self.settings_btn.clicked.connect(lambda: self._switch_page(3))
         sidebar_layout.addLayout(nav)
         sidebar_layout.addStretch(1)
-
-        meta = QLabel("运行中可退出到托盘", sidebar)
-        meta.setObjectName("dim")
-        meta.setWordWrap(True)
-        sidebar_layout.addWidget(meta)
 
         self.stack = QStackedWidget()
         self.dashboard_page = DashboardPage()
@@ -463,13 +448,21 @@ class MainWindow(QMainWindow):
             self.token_page.token_status_btn.setEnabled(True)
 
     def _on_apply_token(self):
-        description = self.token_page.token_description_edit.text().strip() or "iTrader Client"
+        description = self.token_page.token_description_edit.text().strip() or "iTrader 智能交易客户端"
         self._on_open_token(description)
 
     def _on_refresh_token(self):
         self._on_open_token("")
 
+    def _sync_auto_trade_button(self, value: bool):
+        self._head_auto_btn.setText("自动交易：开" if value else "自动交易：关")
+        self._head_auto_btn.setProperty("variant", "success" if value else "secondary")
+        style = self._head_auto_btn.style()
+        style.unpolish(self._head_auto_btn)
+        style.polish(self._head_auto_btn)
+
     def _on_auto_trade_changed(self, value: bool):
+        self._sync_auto_trade_button(value)
         if self.dashboard_page.auto_trade_checkbox.isChecked() != value:
             self.dashboard_page.auto_trade_checkbox.blockSignals(True)
             self.dashboard_page.auto_trade_checkbox.setChecked(value)
@@ -500,8 +493,8 @@ class MainWindow(QMainWindow):
     def show_about(self):
         QMessageBox.information(
             self,
-            "关于 iTrader",
-            "iTrader 交易客户端\n版本 %s\n\n基于 Clean Architecture + PySide6 构建" % __version__,
+            "关于 iTrader 智能交易客户端",
+            "iTrader 智能交易客户端\n版本 %s\n\n基于 Clean Architecture + PySide6 构建" % __version__,
         )
 
     def ask_confirm_quit(self) -> bool:

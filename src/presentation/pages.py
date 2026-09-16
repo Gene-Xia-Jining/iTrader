@@ -1,7 +1,6 @@
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -60,7 +59,7 @@ class DashboardPage(BasePage):
         server_layout = QVBoxLayout(server_card)
         server_layout.setContentsMargins(16, 14, 16, 14)
         server_layout.setSpacing(8)
-        server_title = QLabel("服务器", server_card)
+        server_title = QLabel("服务器状态", server_card)
         server_title.setObjectName("subtitle")
         self.server_status = StatusPill(server_card)
         server_layout.addWidget(server_title)
@@ -133,7 +132,7 @@ class TokenPage(BasePage):
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(10)
         self.token_description_edit = QLineEdit()
-        self.token_description_edit.setPlaceholderText("例如：iTrader GUI Client")
+        self.token_description_edit.setPlaceholderText("例如：iTrader 智能交易客户端")
         status_box = QWidget()
         status_layout = QVBoxLayout(status_box)
         status_layout.setContentsMargins(0, 0, 0, 0)

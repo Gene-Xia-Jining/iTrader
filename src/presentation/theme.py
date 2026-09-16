@@ -1,5 +1,3 @@
-from PySide6.QtGui import QColor
-
 
 BG = "#1e1e2e"
 BG_ALT = "#181825"
@@ -156,6 +154,19 @@ QPushButton[variant="danger"]:hover:enabled {
 
 QPushButton[variant="danger"]:pressed:enabled {
     background-color: #f38ba8;
+}
+
+QPushButton[variant="success"] {
+    background-color: #a6e3a1;
+    color: #111827;
+}
+
+QPushButton[variant="success"]:hover:enabled {
+    background-color: #b9f0b5;
+}
+
+QPushButton[variant="success"]:pressed:enabled {
+    background-color: #a6e3a1;
 }
 
 QPushButton[variant="flat"] {

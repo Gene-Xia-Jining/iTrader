@@ -1,18 +1,11 @@
 from enum import Enum
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 class TradeCommandStatus(str, Enum):
     PENDING = "pending"
     EXECUTING = "executing"
     EXECUTED = "executed"
     FAILED = "failed"
-
-class TradeSide(str, Enum):
-    BUY = "buy"
-    SELL = "sell"
-    LONG = "long"
-    SHORT = "short"
 
 @dataclass
 class StrategySignal:

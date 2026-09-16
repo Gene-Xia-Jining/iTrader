@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Property
@@ -12,14 +11,6 @@ from ..domain.events import (
     TradingStoppedEvent,
 )
 from ..domain.events import ConfigChangedEvent
-
-
-@dataclass
-class LogEntry:
-    message: str
-    level: LogLevel
-    timestamp: object
-
 
 class MainViewModel(QObject):
     serverStatusChanged = Signal(str)
@@ -136,7 +127,6 @@ class MainViewModel(QObject):
             self.tradingStatusColorChanged.emit(self.tradingStatusColor)
             self.canStartChanged.emit(self.canStart)
             self.canStopChanged.emit(self.canStop)
-
 
 class ConfigDialogViewModel(QObject):
     validated = Signal(dict)

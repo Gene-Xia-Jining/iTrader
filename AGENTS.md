@@ -1,6 +1,6 @@
 项目说明
 
-这是交易客户端，使用 Python + TqSdk。
+这是 iTrader 智能交易客户端，使用 Python + TqSdk。
 
 职责
 

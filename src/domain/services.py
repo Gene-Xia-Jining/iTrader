@@ -11,6 +11,3 @@ class TradingExecutor(ABC):
     async def close(self) -> None: ...
 
 
-class StrategySignalHandler(ABC):
-    @abstractmethod
-    async def handle(self, signal: StrategySignal) -> None: ...

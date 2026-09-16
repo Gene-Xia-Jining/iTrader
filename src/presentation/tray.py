@@ -1,6 +1,5 @@
 """System tray (menu bar) UI for iTrader."""
 
-from __future__ import annotations
 
 import sys
 from pathlib import Path

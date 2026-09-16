@@ -1,11 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import sys
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # SPECPATH 是 PyInstaller 注入的 spec 文件所在目录
 ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 SRC = os.path.join(ROOT, 'src')
+
+# 版本号唯一来源是 src/__init__.py
+sys.path.insert(0, ROOT)
+from src import __version__ as VERSION  # noqa: E402
 
 datas = [
     (os.path.join(ROOT, 'config.toml'), '.'),
@@ -100,6 +106,7 @@ app = BUNDLE(
     a.datas,
     name='iTrader.app',
     bundle_identifier='com.xiajining.itrader',
+    version=VERSION,
     info_plist={
         'CFBundleDevelopmentRegion': 'zh_CN',
         'CFBundleAllowMixedLocalizations': True,

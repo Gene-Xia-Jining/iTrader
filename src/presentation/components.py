@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import BORDER_SOFT  # noqa: F401  kept for future component styling
 
 
 class Card(QFrame):
@@ -55,7 +54,9 @@ class StatusPill(QFrame):
 
 class SidebarButton(QPushButton):
     def __init__(self, label: str, parent: Optional[QWidget] = None):
-        super().__init__(label, parent)
+        # 文字只由内部 QLabel 渲染；若同时设置 QPushButton.text，按钮会把文字画两遍
+        super().__init__(parent)
+        self.setAccessibleName(label)
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
         text = QLabel(label, self)

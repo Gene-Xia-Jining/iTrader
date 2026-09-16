@@ -1,5 +1,4 @@
 import asyncio
-import sys
 import threading
 from pathlib import Path
 from typing import Optional
@@ -197,7 +196,7 @@ class AppController(QObject):
 
     async def _request_token(self, description: str):
         try:
-            await self.bootstrap.token_service.request_token(description or "iTrader Client")
+            await self.bootstrap.token_service.request_token(description or "iTrader 智能交易客户端")
             self.token_status_changed.emit("已提交申请，等待服务器审核")
             QTimer.singleShot(1500, lambda: self._run_async(self._refresh_token_status()))
         except Exception as e:

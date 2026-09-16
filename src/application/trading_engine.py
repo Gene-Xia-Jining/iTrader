@@ -20,7 +20,6 @@ from ..domain.events import (
 )
 from ..domain.repositories import (
     StrategyStreamClient,
-    TokenStore,
     TradeCommandRepository,
 )
 from ..domain.services import TradingExecutor
