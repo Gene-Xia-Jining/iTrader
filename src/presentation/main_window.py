@@ -3,7 +3,6 @@ from typing import Optional
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -29,7 +28,7 @@ from .. import __version__
 from ..domain.entities import TradingConfiguration
 from .components import SidebarButton
 from .pages import DashboardPage, make_button, LogPage, SettingsPage, TokenPage
-from .theme import APP_QSS, status_color
+from .theme import qss_for, status_color
 from .viewmodels import ConfigDialogViewModel, MainViewModel
 
 
@@ -194,10 +193,6 @@ class ConfigDialog(QDialog):
         form.addRow("交易品种:", self.symbols_edit)
         form.addRow("", symbols_hint)
 
-        self.auto_trade_checkbox = QCheckBox("启用自动交易")
-        self.auto_trade_checkbox.setChecked(self._vm.auto_trade)
-        form.addRow("", self.auto_trade_checkbox)
-
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -217,7 +212,6 @@ class ConfigDialog(QDialog):
             tq_password=self.tq_password_edit.text(),
             initial_balance_str=self.balance_edit.text().strip(),
             symbols_str=self.symbols_edit.text(),
-            auto_trade=self.auto_trade_checkbox.isChecked(),
         )
         if not ok:
             QMessageBox.warning(self, "输入错误", msg)
@@ -264,7 +258,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("iTrader 智能交易客户端")
         self.resize(1180, 760)
         self.setMinimumSize(QSize(960, 620))
-        self.setStyleSheet(APP_QSS)
+        self._dark = True
+        self.setStyleSheet(qss_for(self._dark))
         self._build_menubar()
         self._build_ui()
         self._build_statusbar()
@@ -327,6 +322,11 @@ class MainWindow(QMainWindow):
         self._head_auto_btn.clicked.connect(lambda: self._on_toggle_auto_trade(not self._vm.tradingActive))
         self._sync_auto_trade_button(self._vm.tradingActive)
         head_layout.addWidget(self._head_auto_btn)
+        self._head_theme_btn = make_button("", variant="secondary")
+        self._head_theme_btn.setCheckable(True)
+        self._head_theme_btn.clicked.connect(self._toggle_theme)
+        self._sync_theme_button(self._dark)
+        head_layout.addWidget(self._head_theme_btn)
         self._head_quit_btn = make_button("退出", variant="danger")
         self._head_quit_btn.clicked.connect(self._on_quit)
         head_layout.addWidget(self._head_quit_btn)
@@ -402,6 +402,7 @@ class MainWindow(QMainWindow):
 
     def _bind_vm(self):
         self._vm.serverStatusChanged.connect(self._on_server_status_changed)
+        self._vm.themeChanged.connect(self._on_theme_changed)
         self._vm.serverStatusColorChanged.connect(self._on_server_status_color_changed)
         self._vm.tradingStatusChanged.connect(self._on_trade_status_changed)
         self._vm.tradingStatusColorChanged.connect(self._on_trade_status_color_changed)
@@ -444,6 +445,22 @@ class MainWindow(QMainWindow):
         style = self._head_auto_btn.style()
         style.unpolish(self._head_auto_btn)
         style.polish(self._head_auto_btn)
+
+    def _sync_theme_button(self, dark: bool):
+        self._head_theme_btn.setText("浅色" if dark else "深色")
+        self._head_theme_btn.setChecked(not dark)
+
+    def _toggle_theme(self):
+        self._dark = not self._dark
+        self.setStyleSheet(qss_for(self._dark))
+        if self._vm is not None:
+            self._vm.set_theme(self._dark)
+        self._sync_theme_button(self._dark)
+
+    def _on_theme_changed(self, dark: bool):
+        self._dark = dark
+        self.setStyleSheet(qss_for(dark))
+        self._sync_theme_button(dark)
 
     def _append_log(self, text: str, color: str):
         cursor = self.log_page.log_view.textCursor()

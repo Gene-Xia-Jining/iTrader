@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QCheckBox,
 )
 
 from .. import __version__
@@ -205,9 +204,6 @@ class SettingsPage(BasePage):
         self.symbols_edit.setPlaceholderText("品种1,品种2,...")
         form.addRow("交易品种:", self.symbols_edit)
 
-        self.auto_trade_checkbox = QCheckBox("启用自动交易")
-        form.addRow("", self.auto_trade_checkbox)
-
         layout.addLayout(form)
 
         self.save_btn = make_button("保存", variant="primary")
@@ -234,7 +230,6 @@ class SettingsPage(BasePage):
             "tq_password": self.tq_password_edit.text(),
             "initial_balance": self.balance_edit.text().strip(),
             "symbols": self.symbols_edit.text().strip(),
-            "auto_trade": self.auto_trade_checkbox.isChecked(),
         }
 
         # Validate

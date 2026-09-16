@@ -11,6 +11,7 @@ from ..domain.events import (
     TradingStoppedEvent,
 )
 from ..domain.events import ConfigChangedEvent
+from .theme import log_colors
 
 class MainViewModel(QObject):
     serverStatusChanged = Signal(str)
@@ -20,6 +21,7 @@ class MainViewModel(QObject):
     autoTradeChanged = Signal(bool)
     logMessage = Signal(str, str)
     configChanged = Signal()
+    themeChanged = Signal(bool)
 
     def __init__(
         self,
@@ -32,6 +34,8 @@ class MainViewModel(QObject):
         self._config = config
         self._server_connected = False
         self._trading_active = False
+        self._dark = True
+        self._log_colors = log_colors(True)
         self._subscribe_events()
 
     def _subscribe_events(self):
@@ -81,16 +85,18 @@ class MainViewModel(QObject):
         self.autoTradeChanged.emit(self._config.auto_trade)
         self.configChanged.emit()
 
+    def set_theme(self, dark: bool) -> None:
+        """切换明暗主题，更新日志颜色映射并通知 UI。"""
+        if self._dark == dark:
+            return
+        self._dark = dark
+        self._log_colors = log_colors(dark)
+        self.themeChanged.emit(dark)
+
     # ----- Event handlers -----
 
     def _on_log(self, event: LogEvent):
-        color_map = {
-            LogLevel.INFO: "#ffffff",
-            LogLevel.WARNING: "#f39c12",
-            LogLevel.ERROR: "#e74c3c",
-            LogLevel.SUCCESS: "#2ecc71",
-        }
-        color = color_map.get(event.level, "#ffffff")
+        color = self._log_colors.get(event.level.value, "#ffffff")
         ts = event.timestamp.strftime("%H:%M:%S")
         self.logMessage.emit(f"[{ts}] [{event.level.value}] {event.message}", color)
 
@@ -144,10 +150,6 @@ class ConfigDialogViewModel(QObject):
     def symbols(self) -> list[str]:
         return list(self._config.symbols)
 
-    @property
-    def auto_trade(self) -> bool:
-        return self._config.auto_trade
-
     def symbols_text(self) -> str:
         return ",".join(self._config.symbols)
 
@@ -158,7 +160,6 @@ class ConfigDialogViewModel(QObject):
         tq_password: str,
         initial_balance_str: str,
         symbols_str: str,
-        auto_trade: bool,
     ) -> tuple[bool, str]:
         try:
             initial_balance = float(initial_balance_str)
@@ -175,7 +176,6 @@ class ConfigDialogViewModel(QObject):
             "tq_password": tq_password,
             "initial_balance": initial_balance,
             "symbols": symbols,
-            "auto_trade": auto_trade,
         }
         self.validated.emit(result)
         return True, ""

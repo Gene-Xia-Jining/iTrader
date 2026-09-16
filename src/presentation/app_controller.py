@@ -164,7 +164,7 @@ class AppController(QObject):
             new_config = TradingConfiguration(
                 server_url=data["server_url"],
                 symbols=data["symbols"],
-                auto_trade=data["auto_trade"],
+                auto_trade=current_config.auto_trade,
                 tq_account=data["tq_account"],
                 tq_password=data["tq_password"],
                 initial_balance=data["initial_balance"],
@@ -192,7 +192,7 @@ class AppController(QObject):
         new_config = TradingConfiguration(
             server_url=data["server_url"],
             symbols=data["symbols"],
-            auto_trade=data["auto_trade"],
+            auto_trade=current_config.auto_trade,
             tq_account=data["tq_account"],
             tq_password=data["tq_password"],
             initial_balance=data["initial_balance"],
