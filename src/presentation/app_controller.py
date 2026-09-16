@@ -49,6 +49,7 @@ class AppController(QObject):
             on_show_about=self._handle_show_about,
             on_quit=self._handle_quit,
             on_save_config=self._handle_save_config,
+            on_save_account=self._handle_save_account,
             on_test_server=self.handle_test_server,
         )
         self.server_test_finished.connect(self._window.settings_page.server_test.set_result)
@@ -195,20 +196,34 @@ class AppController(QObject):
                 )
 
     def _handle_save_config(self, data: dict):
-        """Handle saving configuration from the embedded settings page"""
+        """保存来自设置页的服务器连接配置（data 为部分字段）。"""
+        self._apply_partial_config(data)
+
+    def _handle_save_account(self, data: dict):
+        """保存来自交易账号页的账号、资金与品种配置（data 为部分字段）。"""
+        self._apply_partial_config(data)
+
+    def _apply_partial_config(self, data: dict):
+        """以当前配置为基准，用 data 中的字段覆盖后保存。"""
         if self._vm is None:
             return
-        current_config = self._vm.config
-        # 设置页表单传来的是逗号分隔字符串和数字字符串，先转回领域模型类型
-        symbols = [s.strip() for s in data["symbols"].split(",") if s.strip()]
+        current = self._vm.config
+        if "symbols" in data:
+            symbols = [s.strip() for s in data["symbols"].split(",") if s.strip()]
+        else:
+            symbols = list(current.symbols)
+        if "initial_balance" in data:
+            initial_balance = float(data["initial_balance"])
+        else:
+            initial_balance = current.initial_balance
         new_config = TradingConfiguration(
-            server_url=data["server_url"],
+            server_url=data.get("server_url", current.server_url),
             symbols=symbols,
-            auto_trade=current_config.auto_trade,
-            tq_account=data["tq_account"],
-            tq_password=data["tq_password"],
-            initial_balance=float(data["initial_balance"]),
-            database_path=current_config.database_path,
+            auto_trade=current.auto_trade,
+            tq_account=data.get("tq_account", current.tq_account),
+            tq_password=data.get("tq_password", current.tq_password),
+            initial_balance=initial_balance,
+            database_path=current.database_path,
         )
         self.bootstrap.save_config(new_config)
         self._vm.update_config(new_config)

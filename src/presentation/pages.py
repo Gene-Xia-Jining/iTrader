@@ -252,7 +252,7 @@ class ServerUrlTestRow(QWidget):
 class SettingsPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.header = PageHeader("设置", "直接修改配置，保存后即时生效。")
+        self.header = PageHeader("设置", "服务器连接配置，保存后即时生效。")
         self.content_layout.addWidget(self.header)
 
         card = Card()
@@ -269,6 +269,57 @@ class SettingsPage(BasePage):
         self.server_test = ServerUrlTestRow()
         self.server_url_edit = self.server_test.url_edit
         form.addRow("服务器地址:", self.server_test)
+
+        layout.addLayout(form)
+
+        self.save_btn = make_button("保存", variant="primary")
+        layout.addWidget(self.save_btn, 0, Qt.AlignRight)
+        self.save_btn.clicked.connect(self._on_save_clicked)
+
+        layout.addStretch(1)
+        self.content_layout.addWidget(card)
+
+        # For compatibility, we keep the on_save callback to be set externally
+        self.on_save = None  # type: Optional[Callable[[dict], None]]
+
+        self.content_layout.addStretch(1)
+
+    def set_config(self, config: TradingConfiguration):
+        """用当前配置填充表单（启动时以及配置保存后调用）。"""
+        self.server_url_edit.setText(config.server_url)
+
+    def _on_save_clicked(self):
+        data = {"server_url": self.server_url_edit.text().strip()}
+
+        # Validate
+        if not data["server_url"]:
+            QMessageBox.warning(self, "输入错误", "服务器地址不能为空")
+            return
+
+        # Call the external save callback
+        if self.on_save:
+            self.on_save(data)
+            QMessageBox.information(self, "保存成功", "配置已保存并生效")
+        else:
+            QMessageBox.warning(self, "错误", "保存回调未设置")
+
+
+class AccountPage(BasePage):
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.header = PageHeader("交易账号", "天勤账号、密码、资金与品种配置，保存后即时生效。")
+        self.content_layout.addWidget(self.header)
+
+        card = Card()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
 
         self.tq_account_edit = QLineEdit()
         self.tq_account_edit.setPlaceholderText("天勤账号")
@@ -296,27 +347,19 @@ class SettingsPage(BasePage):
         layout.addStretch(1)
         self.content_layout.addWidget(card)
 
-        # Fix: setContentsMargins must have 4 parameters
-        # We'll set it in the BasePage, but ensure we don't have extra parameters
-        # The BasePage already sets it correctly.
-
-        # For compatibility, we keep the on_save callback to be set externally
         self.on_save = None  # type: Optional[Callable[[dict], None]]
 
         self.content_layout.addStretch(1)
 
     def set_config(self, config: TradingConfiguration):
         """用当前配置填充表单（启动时以及配置保存后调用）。"""
-        self.server_url_edit.setText(config.server_url)
         self.tq_account_edit.setText(config.tq_account)
         self.tq_password_edit.setText(config.tq_password)
         self.balance_edit.setText(str(config.initial_balance))
         self.symbols_edit.setText(",".join(config.symbols))
 
     def _on_save_clicked(self):
-        # Collect data
         data = {
-            "server_url": self.server_url_edit.text().strip(),
             "tq_account": self.tq_account_edit.text().strip(),
             "tq_password": self.tq_password_edit.text(),
             "initial_balance": self.balance_edit.text().strip(),
@@ -324,9 +367,6 @@ class SettingsPage(BasePage):
         }
 
         # Validate
-        if not data["server_url"]:
-            QMessageBox.warning(self, "输入错误", "服务器地址不能为空")
-            return
         if not data["tq_account"]:
             QMessageBox.warning(self, "输入错误", "天勤账号不能为空")
             return

@@ -106,7 +106,7 @@ class WindowBindingsTest(unittest.TestCase):
         window.settings_page.server_test.test_btn.click()
         self.assertEqual(calls, ["http://localhost:8000"])
 
-    def test_main_window_settings_page_shows_config_values(self):
+    def test_main_window_pages_show_config_values(self):
         _make_app()
         window = MainWindow(
             vm=MainViewModel(EventBus(), self._make_config()),
@@ -121,10 +121,11 @@ class WindowBindingsTest(unittest.TestCase):
         )
         page = window.settings_page
         self.assertEqual(page.server_url_edit.text(), "http://localhost:8000")
-        self.assertEqual(page.tq_account_edit.text(), "acc")
-        self.assertEqual(page.tq_password_edit.text(), "pwd")
-        self.assertEqual(page.balance_edit.text(), "1000000")
-        self.assertEqual(page.symbols_edit.text(), "SHFE.au2510")
+        account = window.account_page
+        self.assertEqual(account.tq_account_edit.text(), "acc")
+        self.assertEqual(account.tq_password_edit.text(), "pwd")
+        self.assertEqual(account.balance_edit.text(), "1000000")
+        self.assertEqual(account.symbols_edit.text(), "SHFE.au2510")
 
     def test_config_dialog_test_row(self):
         _make_app()
