@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260916T004052063Z-80052-1d9974f573a6",
+  "runId": "20260916T004052063Z-80052-1d9974f573a6",
+  "runStatus": "inconclusive",
+  "coverage": {
+    "status": "partial",
+    "reasons": [
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "src/presentation/app_controller.py",
+        "detail": "spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "src/presentation/tray.py",
+        "detail": "spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "tests/test_main_window_ui.py",
+        "detail": "spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "src/presentation/app_controller.py",
+        "detail": "scanner_failed: spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "src/presentation/tray.py",
+        "detail": "scanner_failed: spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "tests/test_main_window_ui.py",
+        "detail": "scanner_failed: spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+        "affectsCompletion": true
+      }
+    ]
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "2642045116d1c0ca04605d1f2f104c8232d379d8",
+  "diffHash": "30557209e4d7f4177150ef0dad4d5167202e58442b0615ff837293fc92013dbb",
+  "rulesVersion": "unavailable",
+  "sessionHash": "2ae04e9f4440ebf6fb7b1e06ffe84f3915a467d1892bf0f93b94b033b9c72e1e",
+  "reportRef": ".mimosa/reports/task-review-sess_c2a4a14f-d9dc-44d6-b244-1738535f0c59-20260916T004052063Z-80052-1d9974f573a6.json",
+  "events": [],
+  "observedFindingIds": [],
+  "verifiedFiles": [],
+  "recordedAt": "2026-09-16T00:40:52.649Z"
+}

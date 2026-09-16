@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20260916T004052063Z-80052-1d9974f573a6",
+  "runStatus": "inconclusive",
+  "errors": [
+    "scan:src/presentation/app_controller.py: scanner_failed: spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+    "scan:src/presentation/tray.py: scanner_failed: spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT",
+    "scan:tests/test_main_window_ui.py: scanner_failed: spawnSync /opt/homebrew/Cellar/node/26.8.1/bin/node ETIMEDOUT"
+  ],
+  "target": ".",
+  "revision": "2642045116d1c0ca04605d1f2f104c8232d379d8",
+  "diffHash": "30557209e4d7f4177150ef0dad4d5167202e58442b0615ff837293fc92013dbb",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-09-16T00:40:52.063Z",
+  "timing": {
+    "startedAt": "2026-09-16T00:40:48.511Z",
+    "completedAt": "2026-09-16T00:40:52.063Z",
+    "durationMs": 3552
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "scanner_failed": 3,
+      "project_check_failed": 3
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_c2a4a14f-d9dc-44d6-b244-1738535f0c59-20260916T004052063Z-80052-1d9974f573a6.json"
+}

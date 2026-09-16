@@ -20,8 +20,6 @@ class MainViewModel(QObject):
     autoTradeChanged = Signal(bool)
     logMessage = Signal(str, str)
     configChanged = Signal()
-    canStartChanged = Signal(bool)
-    canStopChanged = Signal(bool)
 
     def __init__(
         self,
@@ -70,12 +68,8 @@ class MainViewModel(QObject):
             self._config.auto_trade = value
             self.autoTradeChanged.emit(value)
 
-    @Property(bool, notify=canStartChanged)
-    def canStart(self) -> bool:
-        return not self._trading_active
-
-    @Property(bool, notify=canStopChanged)
-    def canStop(self) -> bool:
+    @Property(bool, notify=tradingStatusChanged)
+    def tradingActive(self) -> bool:
         return self._trading_active
 
     @property
@@ -109,24 +103,18 @@ class MainViewModel(QObject):
             self._trading_active = event.trading_active
             self.tradingStatusChanged.emit(self.tradingStatus)
             self.tradingStatusColorChanged.emit(self.tradingStatusColor)
-            self.canStartChanged.emit(self.canStart)
-            self.canStopChanged.emit(self.canStop)
 
     def _on_trading_started(self):
         if not self._trading_active:
             self._trading_active = True
             self.tradingStatusChanged.emit(self.tradingStatus)
             self.tradingStatusColorChanged.emit(self.tradingStatusColor)
-            self.canStartChanged.emit(self.canStart)
-            self.canStopChanged.emit(self.canStop)
 
     def _on_trading_stopped(self):
         if self._trading_active:
             self._trading_active = False
             self.tradingStatusChanged.emit(self.tradingStatus)
             self.tradingStatusColorChanged.emit(self.tradingStatusColor)
-            self.canStartChanged.emit(self.canStart)
-            self.canStopChanged.emit(self.canStop)
 
 class ConfigDialogViewModel(QObject):
     validated = Signal(dict)

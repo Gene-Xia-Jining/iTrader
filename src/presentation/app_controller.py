@@ -39,9 +39,7 @@ class AppController(QObject):
         self._vm = MainViewModel(self.bootstrap.event_bus, config, self.qt_app)
         self._window = MainWindow(
             vm=self._vm,
-            on_start=self._handle_start,
-            on_stop=self._handle_stop,
-            on_toggle_auto_trade=self._handle_toggle_auto_trade,
+            on_toggle_auto_trade=self._handle_toggle_trading,
             on_open_config=self._handle_open_config,
             on_open_token=self._handle_open_token,
             on_clear_logs=self._handle_clear_logs,
@@ -79,8 +77,6 @@ class AppController(QObject):
         self._tray = TrayApp(
             self.qt_app,
             self._vm,
-            on_start=self._handle_start,
-            on_stop=self._handle_stop,
             on_show_window=self._show_window,
             on_open_config=self._handle_open_config,
             on_show_about=self._handle_show_about,
@@ -119,6 +115,13 @@ class AppController(QObject):
             self._engine.set_auto_trade(value)
         if self._vm is not None:
             self._vm.setAutoTrade(value)
+
+    def _handle_toggle_trading(self, value: bool):
+        self._handle_toggle_auto_trade(value)
+        if value:
+            self._handle_start()
+        else:
+            self._handle_stop()
 
     def _handle_open_config(self):
         if self._vm is None:

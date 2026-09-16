@@ -2,7 +2,6 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -77,24 +76,6 @@ class DashboardPage(BasePage):
         trade_layout.addWidget(self.trade_status)
         grid.addWidget(trade_card, 0, 1)
 
-        action_card = Card()
-        action_layout = QVBoxLayout(action_card)
-        action_layout.setContentsMargins(16, 14, 16, 16)
-        action_layout.setSpacing(10)
-        action_title = QLabel("交易控制", action_card)
-        action_title.setObjectName("subtitle")
-        buttons = QHBoxLayout()
-        buttons.setSpacing(10)
-        self.start_btn = make_button("启动自动交易")
-        self.stop_btn = make_button("停止自动交易", variant="danger")
-        buttons.addWidget(self.start_btn, 1)
-        buttons.addWidget(self.stop_btn, 1)
-        action_layout.addWidget(action_title)
-        action_layout.addLayout(buttons)
-        self.auto_trade_checkbox = QCheckBox("启用自动交易（接收信号后自动下单）")
-        action_layout.addWidget(self.auto_trade_checkbox)
-        grid.addWidget(action_card, 1, 0, 1, 2)
-
         quick_card = Card()
         quick_layout = QGridLayout(quick_card)
         quick_layout.setContentsMargins(16, 14, 16, 16)
@@ -109,7 +90,7 @@ class DashboardPage(BasePage):
         quick_layout.addWidget(self.config_btn, 1, 0)
         quick_layout.addWidget(self.token_btn, 1, 1)
         quick_layout.addWidget(self.clear_logs_btn, 1, 2)
-        grid.addWidget(quick_card, 2, 0, 1, 2)
+        grid.addWidget(quick_card, 1, 0, 1, 2)
 
         self.content_layout.addLayout(grid)
         self.add_stretch()

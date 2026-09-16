@@ -242,8 +242,6 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         vm: MainViewModel,
-        on_start,
-        on_stop,
         on_toggle_auto_trade,
         on_open_config,
         on_open_token,
@@ -254,8 +252,6 @@ class MainWindow(QMainWindow):
     ):
         super().__init__(parent)
         self._vm = vm
-        self._on_start = on_start
-        self._on_stop = on_stop
         self._on_toggle_auto_trade = on_toggle_auto_trade
         self._on_open_config = on_open_config
         self._on_open_token = on_open_token
@@ -289,15 +285,6 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self._on_quit)
         file_menu.addAction(quit_action)
         bar.addMenu(file_menu)
-
-        trade_menu = QMenu("交易", self)
-        start_action = QAction("启动自动交易", self)
-        start_action.triggered.connect(self._on_start)
-        trade_menu.addAction(start_action)
-        stop_action = QAction("停止自动交易", self)
-        stop_action.triggered.connect(self._on_stop)
-        trade_menu.addAction(stop_action)
-        bar.addMenu(trade_menu)
 
         view_menu = QMenu("视图", self)
         clear_logs_action = QAction("清空日志", self)
@@ -334,9 +321,9 @@ class MainWindow(QMainWindow):
         head_layout.addLayout(brand)
         head_layout.addStretch(1)
         self._head_auto_btn = make_button("", variant="")
-        self._head_auto_btn.setToolTip("点击切换自动交易开/关")
-        self._head_auto_btn.clicked.connect(lambda: self._on_toggle_auto_trade(not self._vm.autoTrade))
-        self._sync_auto_trade_button(self._vm.autoTrade)
+        self._head_auto_btn.setToolTip("点击启动/停止自动交易")
+        self._head_auto_btn.clicked.connect(lambda: self._on_toggle_auto_trade(not self._vm.tradingActive))
+        self._sync_auto_trade_button(self._vm.tradingActive)
         head_layout.addWidget(self._head_auto_btn)
         self._head_quit_btn = make_button("退出", variant="danger")
         self._head_quit_btn.clicked.connect(self._on_quit)
@@ -380,15 +367,9 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
         self.stack.setCurrentIndex(0)
 
-        self.dashboard_page.auto_trade_checkbox.setChecked(self._vm.autoTrade)
-        self.dashboard_page.start_btn.clicked.connect(self._on_start)
-        self.dashboard_page.stop_btn.clicked.connect(self._on_stop)
-        self.dashboard_page.auto_trade_checkbox.toggled.connect(self._on_toggle_auto_trade)
         self.dashboard_page.config_btn.clicked.connect(self._on_open_config)
         self.dashboard_page.token_btn.clicked.connect(lambda: self._switch_page(1))
         self.dashboard_page.clear_logs_btn.clicked.connect(self._on_clear_logs)
-        self.dashboard_page.start_btn.setEnabled(self._vm.canStart)
-        self.dashboard_page.stop_btn.setEnabled(self._vm.canStop)
 
         self.token_page.token_apply_btn.clicked.connect(self._on_apply_token)
         self.token_page.token_refresh_btn.clicked.connect(self._on_refresh_token)
@@ -419,10 +400,7 @@ class MainWindow(QMainWindow):
         self._vm.serverStatusColorChanged.connect(self._on_server_status_color_changed)
         self._vm.tradingStatusChanged.connect(self._on_trade_status_changed)
         self._vm.tradingStatusColorChanged.connect(self._on_trade_status_color_changed)
-        self._vm.autoTradeChanged.connect(self._on_auto_trade_changed)
         self._vm.logMessage.connect(self._append_log)
-        self._vm.canStartChanged.connect(self._on_can_start_changed)
-        self._vm.canStopChanged.connect(self._on_can_stop_changed)
         self._on_server_status_changed(self._vm.serverStatus)
         self._on_server_status_color_changed(self._vm.serverStatusColor)
         self._on_trade_status_changed(self._vm.tradingStatus)
@@ -437,6 +415,7 @@ class MainWindow(QMainWindow):
     def _on_trade_status_changed(self, value: str):
         self.dashboard_page.trade_status.set_status(value, self._vm.tradingStatusColor)
         self._status_text.setText(f"交易状态: {value}")
+        self._sync_auto_trade_button(self._vm.tradingActive)
 
     def _on_trade_status_color_changed(self, color: str):
         self.dashboard_page.trade_status.set_status(self._vm.tradingStatus, color)
@@ -460,19 +439,6 @@ class MainWindow(QMainWindow):
         style = self._head_auto_btn.style()
         style.unpolish(self._head_auto_btn)
         style.polish(self._head_auto_btn)
-
-    def _on_auto_trade_changed(self, value: bool):
-        self._sync_auto_trade_button(value)
-        if self.dashboard_page.auto_trade_checkbox.isChecked() != value:
-            self.dashboard_page.auto_trade_checkbox.blockSignals(True)
-            self.dashboard_page.auto_trade_checkbox.setChecked(value)
-            self.dashboard_page.auto_trade_checkbox.blockSignals(False)
-
-    def _on_can_start_changed(self, value: bool):
-        self.dashboard_page.start_btn.setEnabled(value)
-
-    def _on_can_stop_changed(self, value: bool):
-        self.dashboard_page.stop_btn.setEnabled(value)
 
     def _append_log(self, text: str, color: str):
         cursor = self.log_page.log_view.textCursor()

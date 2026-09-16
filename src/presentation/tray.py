@@ -58,16 +58,13 @@ class TrayApp(QObject):
     """System tray icon with a status menu.
 
     Left-click (or double-click) on the tray icon shows the main window;
-    right-click pops up the menu with start, stop, config, about and quit
-    actions.
+    right-click pops up the menu with status, config, about and quit actions.
     """
 
     def __init__(
         self,
         qt_app: QApplication,
         vm: MainViewModel,
-        on_start: Callable[[], None],
-        on_stop: Callable[[], None],
         on_show_window: Callable[[], None],
         on_open_config: Callable[[], None],
         on_show_about: Callable[[], None],
@@ -85,9 +82,7 @@ class TrayApp(QObject):
 
         self._tray = QSystemTrayIcon(make_tray_icon(), qt_app)
 
-        self._build_menu(
-            on_start, on_stop, on_show_window, on_open_config, on_show_about, on_quit
-        )
+        self._build_menu(on_show_window, on_open_config, on_show_about, on_quit)
         self._tray.activated.connect(self._on_activated)
         self._tray.show()
 
@@ -98,8 +93,6 @@ class TrayApp(QObject):
 
     def _build_menu(
         self,
-        on_start: Callable[[], None],
-        on_stop: Callable[[], None],
         on_show_window: Callable[[], None],
         on_open_config: Callable[[], None],
         on_show_about: Callable[[], None],
@@ -115,16 +108,6 @@ class TrayApp(QObject):
         self._trade_status_action = QAction(menu)
         self._trade_status_action.setEnabled(False)
         menu.addAction(self._trade_status_action)
-
-        menu.addSeparator()
-
-        start_action = QAction("启动自动交易", menu)
-        start_action.triggered.connect(on_start)
-        menu.addAction(start_action)
-
-        stop_action = QAction("停止自动交易", menu)
-        stop_action.triggered.connect(on_stop)
-        menu.addAction(stop_action)
 
         menu.addSeparator()
 
