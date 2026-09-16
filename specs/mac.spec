@@ -14,7 +14,6 @@ sys.path.insert(0, ROOT)
 from src import __version__ as VERSION  # noqa: E402
 
 datas = [
-    (os.path.join(ROOT, 'config.toml'), '.'),
     (os.path.join(SRC, 'resources', 'icon.png'), 'src/resources'),
 ]
 binaries = []
@@ -26,8 +25,6 @@ hiddenimports = [
     'aiosqlite',
     'httpx',
     'pydantic',
-    'toml',
-    # 'tomllib',  # Python 3.11+ stdlib, not needed as hiddenimport
     'PySide6',
     'PySide6.QtCore',
     'PySide6.QtGui',

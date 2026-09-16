@@ -1,68 +1,90 @@
+import json
+import sqlite3
 from pathlib import Path
-import sys
-import toml
-import tomllib
-from typing import Any, Union
-
-from pydantic import BaseModel
+from typing import Optional
 
 from ...domain.entities import TradingConfiguration
 
-class AppConfigModel(BaseModel):
-    server_url: str
-    symbols: list[str]
-    auto_trade: bool = False
-    tq_account: str = ""
-    tq_password: str = ""
-    initial_balance: float = 10_000_000
-    database: str = "data/client.db"
 
 class ConfigService:
-    def __init__(self, config_path: Union[Path, str] = "config.toml"):
-        self.config_path = Path(config_path)
+    """配置持久化到 SQLite（与交易记录共用 data/client.db）。
 
-    def _resolve_bundled_path(self) -> Path:
-        if not self.config_path.exists() and getattr(sys, "frozen", False):
-            bundled = Path(sys._MEIPASS) / "config.toml"
-            if bundled.exists():
-                return bundled
-        return self.config_path
+    使用标准库 sqlite3 同步访问，保持与 Bootstrap.config 同步属性兼容。
+    """
+
+    def __init__(self, db_path: str = "data/client.db"):
+        self.db_path = str(db_path)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._init_table()
+
+    def _conn(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.db_path)
+
+    def _init_table(self):
+        with self._conn() as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS app_config (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    server_url TEXT NOT NULL,
+                    symbols TEXT NOT NULL,
+                    auto_trade INTEGER NOT NULL,
+                    tq_account TEXT NOT NULL,
+                    tq_password TEXT NOT NULL,
+                    initial_balance REAL NOT NULL,
+                    database TEXT NOT NULL,
+                    CHECK (id = 1)
+                )
+            """)
+            db.commit()
 
     def load(self) -> TradingConfiguration:
-        path = self._resolve_bundled_path()
-        if path.exists():
-            with open(path, "rb") as f:
-                data = tomllib.load(f)
-            model = AppConfigModel(**data)
+        with self._conn() as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute("SELECT * FROM app_config WHERE id = 1 LIMIT 1").fetchone()
+        if row is not None:
             return TradingConfiguration(
-                server_url=model.server_url,
-                symbols=model.symbols,
-                auto_trade=model.auto_trade,
-                tq_account=model.tq_account,
-                tq_password=model.tq_password,
-                initial_balance=model.initial_balance,
-                database_path=model.database,
+                server_url=row["server_url"],
+                symbols=json.loads(row["symbols"]),
+                auto_trade=bool(row["auto_trade"]),
+                tq_account=row["tq_account"],
+                tq_password=row["tq_password"],
+                initial_balance=row["initial_balance"],
+                database_path=row["database"],
             )
-        return TradingConfiguration(
-            server_url="http://localhost:8000",
+        # 首次运行：写入默认配置
+        config = TradingConfiguration(
+            server_url="http://192.168.100.100:3080",
             symbols=["SA2409"],
             auto_trade=False,
             tq_account="",
             tq_password="",
             initial_balance=10_000_000,
-            database_path="data/client.db",
+            database_path=self.db_path,
         )
+        self.save(config)
+        return config
 
     def save(self, config: TradingConfiguration) -> None:
-        import toml
-        data: dict[str, Any] = {
-            "server_url": config.server_url,
-            "symbols": config.symbols,
-            "auto_trade": config.auto_trade,
-            "tq_account": config.tq_account,
-            "tq_password": config.tq_password,
-            "initial_balance": config.initial_balance,
-            "database": config.database_path,
-        }
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            toml.dump(data, f)
+        with self._conn() as db:
+            db.execute("""
+                INSERT INTO app_config
+                    (id, server_url, symbols, auto_trade, tq_account, tq_password, initial_balance, database)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    server_url = excluded.server_url,
+                    symbols = excluded.symbols,
+                    auto_trade = excluded.auto_trade,
+                    tq_account = excluded.tq_account,
+                    tq_password = excluded.tq_password,
+                    initial_balance = excluded.initial_balance,
+                    database = excluded.database
+            """, (
+                config.server_url,
+                json.dumps(config.symbols, ensure_ascii=False),
+                int(config.auto_trade),
+                config.tq_account,
+                config.tq_password,
+                config.initial_balance,
+                config.database_path,
+            ))
+            db.commit()

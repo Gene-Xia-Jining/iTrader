@@ -8,7 +8,6 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 SRC = os.path.join(ROOT, 'src')
 
 datas = [
-    (os.path.join(ROOT, 'config.toml'), '.'),
     (os.path.join(SRC, 'resources', 'icon.png'), 'src/resources'),
 ]
 binaries = []
@@ -20,8 +19,6 @@ hiddenimports = [
     'aiosqlite',
     'httpx',
     'pydantic',
-    'toml',
-    'tomllib',
     'cryptography',
     'PySide6',
     'PySide6.QtCore',

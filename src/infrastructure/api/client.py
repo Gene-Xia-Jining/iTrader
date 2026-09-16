@@ -8,6 +8,18 @@ from ...domain.entities import StrategySignal
 from ...domain.repositories import StrategyStreamClient
 from ...domain.repositories import TokenStore
 
+async def check_server_health(server_url: str, timeout: float = 5.0) -> dict:
+    """探测服务器连通性（/api/health 无需认证），失败时抛出异常。"""
+    url = server_url.strip()
+    if "://" not in url:
+        url = "http://" + url
+    url = url.rstrip("/") + "/api/health"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.json()
+
+
 class FileTokenStore(TokenStore):
     def __init__(self, token_dir: Union[Path, str] = "data/tokens"):
         self.token_dir = Path(token_dir)

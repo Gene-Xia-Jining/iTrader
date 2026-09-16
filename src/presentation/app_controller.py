@@ -10,6 +10,7 @@ from ..application.bootstrap import Bootstrap
 from ..application.trading_engine import TradingEngine
 from ..domain.entities import TradingConfiguration
 from ..domain.events import ConfigChangedEvent, LogEvent, LogLevel
+from ..infrastructure.api.client import check_server_health
 from .main_window import ConfigDialog, MainWindow
 from .tray import TrayApp
 from .viewmodels import MainViewModel
@@ -19,12 +20,13 @@ class AppController(QObject):
     engine_stopped = Signal()
     quit_requested = Signal()
     token_status_changed = Signal(str)
+    server_test_finished = Signal(str, bool)
 
     def __init__(self, qt_app, workdir: Path):
         super().__init__()
         self.qt_app = qt_app
         self.workdir = workdir
-        self.bootstrap = Bootstrap(workdir / "config.toml")
+        self.bootstrap = Bootstrap(str(workdir / "data/client.db"))
         self._loop: asyncio.AbstractEventLoop | None = None
         self._engine: Optional[TradingEngine] = None
         self._engine_task: Optional[asyncio.Task] = None
@@ -47,7 +49,9 @@ class AppController(QObject):
             on_show_about=self._handle_show_about,
             on_quit=self._handle_quit,
             on_save_config=self._handle_save_config,
+            on_test_server=self.handle_test_server,
         )
+        self.server_test_finished.connect(self._window.settings_page.server_test.set_result)
         self._setup_tray()
         self._start_async_loop_on_thread()
 
@@ -159,7 +163,13 @@ class AppController(QObject):
         current_config = self._vm.config
         parent = self._window if self._window is not None else None
         dlg = ConfigDialog(parent, current_config)
-        if dlg.exec() == ConfigDialog.Accepted and dlg.result_dict is not None:
+        dlg.server_test.on_test = self.handle_test_server
+        self.server_test_finished.connect(dlg.server_test.set_result)
+        try:
+            accepted = dlg.exec() == ConfigDialog.Accepted
+        finally:
+            self.server_test_finished.disconnect(dlg.server_test.set_result)
+        if accepted and dlg.result_dict is not None:
             data = dlg.result_dict
             new_config = TradingConfiguration(
                 server_url=data["server_url"],
@@ -189,13 +199,15 @@ class AppController(QObject):
         if self._vm is None:
             return
         current_config = self._vm.config
+        # 设置页表单传来的是逗号分隔字符串和数字字符串，先转回领域模型类型
+        symbols = [s.strip() for s in data["symbols"].split(",") if s.strip()]
         new_config = TradingConfiguration(
             server_url=data["server_url"],
-            symbols=data["symbols"],
+            symbols=symbols,
             auto_trade=current_config.auto_trade,
             tq_account=data["tq_account"],
             tq_password=data["tq_password"],
-            initial_balance=data["initial_balance"],
+            initial_balance=float(data["initial_balance"]),
             database_path=current_config.database_path,
         )
         self.bootstrap.save_config(new_config)
@@ -215,6 +227,17 @@ class AppController(QObject):
     def _handle_clear_logs(self):
         if self._window is not None:
             self._window.clear_logs()
+
+    def handle_test_server(self, server_url: str):
+        self._run_async(self._test_server(server_url))
+
+    async def _test_server(self, server_url: str):
+        try:
+            await check_server_health(server_url)
+        except Exception as e:
+            self.server_test_finished.emit(f"连接失败: {e}", False)
+        else:
+            self.server_test_finished.emit("连接成功", True)
 
     def _handle_show_about(self):
         if self._window is not None:

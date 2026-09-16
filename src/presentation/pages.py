@@ -10,11 +10,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QScrollArea,
     QTextEdit,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import __version__
+from ..domain.entities import TradingConfiguration
 from .components import Card, PageHeader, StatusPill
 from .theme import DANGER, MONO_FONT_FAMILY, SUCCESS, WARNING
 
@@ -166,6 +169,86 @@ class LogPage(BasePage):
         self.content_layout.addWidget(self.log_view, 1)
 
 
+class ServerUrlTestRow(QWidget):
+    """服务器地址输入行：输入框 + 测试连接按钮 + 结果标签。
+
+    on_test 由外部设置，接收规范化前的地址字符串；测试结果通过 set_result 回写。
+    """
+
+    def __init__(self, initial: str = "", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.help_btn = QToolButton()
+        self.help_btn.setText("?")
+        self.help_btn.setCursor(Qt.PointingHandCursor)
+        self.help_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.help_btn.setStyleSheet(
+            "QToolButton {"
+            "color: #6c7086; font-weight: bold; font-size: 14px;"
+            "border: 1px solid #6c7086; border-radius: 8px;"
+            "background: transparent;"
+            "min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px;"
+            "}"
+            "QToolButton:hover { background: #313244; }"
+            "QToolButton:pressed { background: #45475a; }"
+        )
+        self.help_btn.clicked.connect(self._show_help)
+        row.addWidget(self.help_btn)
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("http://localhost:8000")
+        if initial:
+            self.url_edit.setText(initial)
+        self.test_btn = make_button("测试连接", variant="secondary")
+        row.addWidget(self.url_edit, 1)
+        row.addWidget(self.test_btn)
+        outer.addLayout(row)
+
+        self.result_label = QLabel("")
+        self.result_label.setWordWrap(True)
+        self.result_label.setVisible(False)
+        outer.addWidget(self.result_label)
+
+        self.on_test = None  # type: Optional[Callable[[str], None]]
+        self.test_btn.clicked.connect(self._emit_test)
+        self.url_edit.returnPressed.connect(self._emit_test)
+
+    def _show_help(self):
+        """点击问号图标后显示服务器地址说明。"""
+        QToolTip.showText(
+            self.help_btn.mapToGlobal(self.help_btn.rect().bottomLeft()),
+            "<div style='font-size:13px; padding:4px;'>"
+            "这是 <b>iTrader</b> 智能交易服务器的地址"
+            "</div>",
+        )
+
+    def _emit_test(self):
+        url = self.url_edit.text().strip()
+        if not url:
+            self.set_result("请先输入服务器地址", False)
+            return
+        self.test_btn.setEnabled(False)
+        self._show("正在测试连接...", WARNING)
+        if self.on_test:
+            self.on_test(url)
+        else:
+            self.set_result("测试功能未启用", False)
+
+    def _show(self, message: str, color: str):
+        self.result_label.setVisible(True)
+        self.result_label.setText(message)
+        self.result_label.setStyleSheet(f"color: {color};")
+
+    def set_result(self, message: str, success: Optional[bool]):
+        color = WARNING if success is None else (SUCCESS if success else DANGER)
+        self._show(message, color)
+        self.test_btn.setEnabled(True)
+
+
 class SettingsPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -183,9 +266,9 @@ class SettingsPage(BasePage):
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(10)
 
-        self.server_url_edit = QLineEdit()
-        self.server_url_edit.setPlaceholderText("http://localhost:8000")
-        form.addRow("服务器地址:", self.server_url_edit)
+        self.server_test = ServerUrlTestRow()
+        self.server_url_edit = self.server_test.url_edit
+        form.addRow("服务器地址:", self.server_test)
 
         self.tq_account_edit = QLineEdit()
         self.tq_account_edit.setPlaceholderText("天勤账号")
@@ -221,6 +304,14 @@ class SettingsPage(BasePage):
         self.on_save = None  # type: Optional[Callable[[dict], None]]
 
         self.content_layout.addStretch(1)
+
+    def set_config(self, config: TradingConfiguration):
+        """用当前配置填充表单（启动时以及配置保存后调用）。"""
+        self.server_url_edit.setText(config.server_url)
+        self.tq_account_edit.setText(config.tq_account)
+        self.tq_password_edit.setText(config.tq_password)
+        self.balance_edit.setText(str(config.initial_balance))
+        self.symbols_edit.setText(",".join(config.symbols))
 
     def _on_save_clicked(self):
         # Collect data

@@ -1,6 +1,6 @@
 import uuid
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from ..domain.entities import TradingConfiguration
 from ..domain.events import EventBus
@@ -26,9 +26,10 @@ def load_or_generate_client_id() -> str:
 class Bootstrap:
     def __init__(
         self,
-        config_path: Union[Path, str] = "config.toml",
+        db_path: str = "data/client.db",
     ):
-        self.config_service = ConfigService(config_path)
+        self.db_path = db_path
+        self.config_service = ConfigService(db_path)
         self.event_bus = EventBus()
         self._config: Optional[TradingConfiguration] = None
         self._trade_repo: Optional[SQLiteTradeCommandRepository] = None
@@ -66,7 +67,7 @@ class Bootstrap:
 
     async def init_db(self) -> SQLiteTradeCommandRepository:
         if self._trade_repo is None:
-            self._trade_repo = SQLiteTradeCommandRepository(self.config.database_path)
+            self._trade_repo = SQLiteTradeCommandRepository(self.db_path)
             await self._trade_repo.init()
         return self._trade_repo
 

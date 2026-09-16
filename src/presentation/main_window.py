@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..domain.entities import TradingConfiguration
 from .components import SidebarButton
-from .pages import DashboardPage, make_button, LogPage, SettingsPage, TokenPage
+from .pages import DashboardPage, make_button, LogPage, ServerUrlTestRow, SettingsPage, TokenPage
 from .theme import qss_for, status_color
 from .viewmodels import ConfigDialogViewModel, MainViewModel
 
@@ -171,9 +171,9 @@ class ConfigDialog(QDialog):
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        self.server_url_edit = QLineEdit(self._vm.server_url)
-        self.server_url_edit.setPlaceholderText("http://localhost:8000")
-        form.addRow("服务器地址:", self.server_url_edit)
+        self.server_test = ServerUrlTestRow(self._vm.server_url)
+        self.server_url_edit = self.server_test.url_edit
+        form.addRow("服务器地址:", self.server_test)
 
         self.tq_account_edit = QLineEdit(self._vm.tq_account)
         form.addRow("天勤账号:", self.tq_account_edit)
@@ -243,6 +243,7 @@ class MainWindow(QMainWindow):
         on_show_about,
         on_quit,
         on_save_config,
+        on_test_server=None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -254,6 +255,7 @@ class MainWindow(QMainWindow):
         self._on_show_about = on_show_about
         self._on_quit = on_quit
         self._on_save_config = on_save_config
+        self._on_test_server = on_test_server
 
         self.setWindowTitle("iTrader 智能交易客户端")
         self.resize(1180, 760)
@@ -367,6 +369,8 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage()
         # Connect settings page save callback
         self.settings_page.on_save = self._on_save_config
+        self.settings_page.server_test.on_test = self._on_test_server
+        self.settings_page.set_config(self._vm.config)
         for page in (self.dashboard_page, self.token_page, self.log_page, self.settings_page):
             self.stack.addWidget(page)
         self.stack.setCurrentIndex(0)
@@ -407,6 +411,9 @@ class MainWindow(QMainWindow):
         self._vm.tradingStatusChanged.connect(self._on_trade_status_changed)
         self._vm.tradingStatusColorChanged.connect(self._on_trade_status_color_changed)
         self._vm.logMessage.connect(self._append_log)
+        self._vm.configChanged.connect(
+            lambda: self.settings_page.set_config(self._vm.config)
+        )
         self._on_server_status_changed(self._vm.serverStatus)
         self._on_server_status_color_changed(self._vm.serverStatusColor)
         self._on_trade_status_changed(self._vm.tradingStatus)
