@@ -20,6 +20,70 @@ async def check_server_health(server_url: str, timeout: float = 5.0) -> dict:
         return response.json()
 
 
+async def fetch_server_symbols(
+    server_url: str,
+    token_service: Optional["TokenApiService"] = None,
+    timeout: float = 5.0,
+) -> list[str]:
+    """获取服务器支持的交易品种列表（/api/symbols），失败时抛出异常。"""
+    data = await _get_server_json(server_url, "/api/symbols", token_service, timeout)
+    return [str(s) for s in data.get("symbols", [])]
+
+
+async def fetch_server_exchanges(
+    server_url: str,
+    token_service: Optional["TokenApiService"] = None,
+    timeout: float = 5.0,
+) -> list[dict]:
+    """获取服务器交易所列表（/api/exchanges），失败时抛出异常。"""
+    data = await _get_server_json(server_url, "/api/exchanges", token_service, timeout)
+    return data.get("exchanges", [])
+
+
+async def submit_server_symbol(
+    server_url: str,
+    symbol: str,
+    exchange: str,
+    token_service: Optional["TokenApiService"] = None,
+    timeout: float = 5.0,
+) -> None:
+    """向服务器品种库提交品种并关联交易所（/api/symbols，需认证），失败时抛出异常。"""
+    url = server_url.strip()
+    if "://" not in url:
+        url = "http://" + url
+    url = url.rstrip("/") + "/api/symbols"
+    headers = _auth_headers(token_service)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            url,
+            json={"symbol": symbol, "exchanges": [exchange]},
+            headers=headers,
+        )
+        response.raise_for_status()
+
+
+async def _get_server_json(
+    server_url: str,
+    path: str,
+    token_service: Optional["TokenApiService"],
+    timeout: float,
+) -> dict:
+    url = server_url.strip()
+    if "://" not in url:
+        url = "http://" + url
+    url = url.rstrip("/") + path
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(url, headers=_auth_headers(token_service))
+        response.raise_for_status()
+        return response.json()
+
+
+def _auth_headers(token_service: Optional["TokenApiService"]) -> dict:
+    if token_service is None:
+        return {}
+    return token_service.get_auth_headers()
+
+
 class FileTokenStore(TokenStore):
     def __init__(self, token_dir: Union[Path, str] = "data/tokens"):
         self.token_dir = Path(token_dir)

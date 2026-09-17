@@ -22,19 +22,19 @@ def _resource_path(name: str) -> Path:
 
 
 def _draw_icon(size: int = 64) -> QIcon:
-    """Programmatic fallback icon (dark rounded square with a yellow block)."""
+    """Programmatic fallback icon (near-black rounded square with an Action Blue block)."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.Antialiasing)
     outer_rect = pix.rect().adjusted(2, 2, -2, -2)
-    painter.setBrush(QColor("#1e1e2e"))
-    painter.setPen(QColor("#45475a"))
+    painter.setBrush(QColor("#272729"))
+    painter.setPen(QColor("#3a3a3c"))
     painter.drawRoundedRect(outer_rect, size // 8, size // 8)
     inner_size = size * 3 // 5
     inner_x = (size - inner_size) // 2
     inner_y = (size - inner_size) // 2
-    painter.setBrush(QColor("#f9e2af"))
+    painter.setBrush(QColor("#2997ff"))
     painter.setPen(Qt.NoPen)
     painter.drawRoundedRect(
         inner_x, inner_y, inner_size, inner_size,

@@ -34,8 +34,8 @@ class MainViewModel(QObject):
         self._config = config
         self._server_connected = False
         self._trading_active = False
-        self._dark = True
-        self._log_colors = log_colors(True)
+        self._dark = False
+        self._log_colors = log_colors(False)
         self._subscribe_events()
 
     def _subscribe_events(self):

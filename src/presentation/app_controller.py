@@ -10,7 +10,13 @@ from ..application.bootstrap import Bootstrap
 from ..application.trading_engine import TradingEngine
 from ..domain.entities import TradingConfiguration
 from ..domain.events import ConfigChangedEvent, LogEvent, LogLevel
-from ..infrastructure.api.client import check_server_health
+from ..infrastructure.api.client import (
+    check_server_health,
+    fetch_server_exchanges,
+    fetch_server_symbols,
+    submit_server_symbol,
+)
+from ..infrastructure.config.broker_store import BrokerStore
 from .main_window import ConfigDialog, MainWindow
 from .tray import TrayApp
 from .viewmodels import MainViewModel
@@ -21,18 +27,24 @@ class AppController(QObject):
     quit_requested = Signal()
     token_status_changed = Signal(str)
     server_test_finished = Signal(str, bool)
+    symbols_fetched = Signal(bool, str, object)
+    exchanges_fetched = Signal(bool, str, object)
+    symbol_submitted = Signal(bool, str)
+    auto_trade_rejected = Signal()
 
     def __init__(self, qt_app, workdir: Path):
         super().__init__()
         self.qt_app = qt_app
         self.workdir = workdir
         self.bootstrap = Bootstrap(str(workdir / "data/client.db"))
+        self.broker_store = BrokerStore(str(workdir / "data/broker.json"))
         self._loop: asyncio.AbstractEventLoop | None = None
         self._engine: Optional[TradingEngine] = None
         self._engine_task: Optional[asyncio.Task] = None
         self._vm: Optional[MainViewModel] = None
         self._window: Optional[MainWindow] = None
         self._tray: Optional[TrayApp] = None
+        self._toggle_rejected = False
         self.token_status_changed.connect(self._on_token_status_changed)
 
     # -------- Lifecycle --------
@@ -51,8 +63,20 @@ class AppController(QObject):
             on_save_config=self._handle_save_config,
             on_save_account=self._handle_save_account,
             on_test_server=self.handle_test_server,
+            on_fetch_symbols=self.handle_fetch_symbols,
+            on_fetch_exchanges=self.handle_fetch_exchanges,
+            on_submit_symbol=self.handle_submit_symbol,
+        )
+        # 期货公司分组与选中项来自 broker.json
+        broker_data = self.broker_store.load()
+        self._window.account_page.set_brokers(
+            broker_data["groups"], broker_data["selected"]
         )
         self.server_test_finished.connect(self._window.settings_page.server_test.set_result)
+        self.symbols_fetched.connect(self._window.settings_page.set_symbols_result)
+        self.exchanges_fetched.connect(self._window.settings_page.set_exchanges_result)
+        self.symbol_submitted.connect(self._window.settings_page.set_symbol_submit_result)
+        self.auto_trade_rejected.connect(self._window.show_server_not_connected)
         self._setup_tray()
         self._start_async_loop_on_thread()
 
@@ -114,13 +138,19 @@ class AppController(QObject):
             self._vm.setAutoTrade(value)
 
     def _handle_toggle_trading(self, value: bool):
-        self._handle_toggle_auto_trade(value)
         if value:
-            self._run_async(self._start_engine())
+            # 开启前先探测服务器连通性，未连接则提示并取消切换
+            self._toggle_rejected = False
+            self._run_async(self._start_engine_checked())
+            if self._window is not None and self._vm is not None:
+                self._show_blocking_toggle(
+                    lambda: self._vm.tradingActive or self._toggle_rejected
+                )
         else:
+            self._handle_toggle_auto_trade(False)
             self._run_async(self._stop_engine())
-        if self._window is not None and self._vm is not None:
-            self._show_blocking_toggle(lambda: self._vm.tradingActive == value)
+            if self._window is not None and self._vm is not None:
+                self._show_blocking_toggle(lambda: not self._vm.tradingActive)
 
     def _show_blocking_toggle(self, finished) -> None:
         """阻塞式提示框：等待切换完成后自动消失。"""
@@ -200,7 +230,10 @@ class AppController(QObject):
         self._apply_partial_config(data)
 
     def _handle_save_account(self, data: dict):
-        """保存来自交易账号页的账号、资金与品种配置（data 为部分字段）。"""
+        """保存来自交易账号页的配置：期货公司写 broker.json，其余写入 SQLite 配置。"""
+        broker = data.get("broker")
+        if broker:
+            self.broker_store.save_selected(broker)
         self._apply_partial_config(data)
 
     def _apply_partial_config(self, data: dict):
@@ -254,6 +287,45 @@ class AppController(QObject):
         else:
             self.server_test_finished.emit("连接成功", True)
 
+    def handle_fetch_symbols(self, server_url: str):
+        self._run_async(self._fetch_symbols(server_url))
+
+    async def _fetch_symbols(self, server_url: str):
+        try:
+            symbols = await fetch_server_symbols(
+                server_url, token_service=self.bootstrap.token_service
+            )
+        except Exception as e:
+            self.symbols_fetched.emit(False, f"获取失败: {e}", [])
+        else:
+            self.symbols_fetched.emit(True, f"获取成功，共 {len(symbols)} 个品种", symbols)
+
+    def handle_fetch_exchanges(self, server_url: str):
+        self._run_async(self._fetch_exchanges(server_url))
+
+    async def _fetch_exchanges(self, server_url: str):
+        try:
+            exchanges = await fetch_server_exchanges(
+                server_url, token_service=self.bootstrap.token_service
+            )
+        except Exception as e:
+            self.exchanges_fetched.emit(False, f"{e}", [])
+        else:
+            self.exchanges_fetched.emit(True, "", exchanges)
+
+    def handle_submit_symbol(self, server_url: str, symbol: str, exchange: str):
+        self._run_async(self._submit_symbol(server_url, symbol, exchange))
+
+    async def _submit_symbol(self, server_url: str, symbol: str, exchange: str):
+        try:
+            await submit_server_symbol(
+                server_url, symbol, exchange, token_service=self.bootstrap.token_service
+            )
+        except Exception as e:
+            self.symbol_submitted.emit(False, f"添加失败: {e}")
+        else:
+            self.symbol_submitted.emit(True, f"品种 {symbol} 已添加到 {exchange}")
+
     def _handle_show_about(self):
         if self._window is not None:
             self._window.show_about()
@@ -295,7 +367,7 @@ class AppController(QObject):
 
     async def _request_token(self, description: str):
         try:
-            await self.bootstrap.token_service.request_token(description or "iTrader 智能交易客户端")
+            await self.bootstrap.token_service.request_token(description or "iTrader 智能交易系统")
             self.token_status_changed.emit("已提交申请，等待服务器审核")
             QTimer.singleShot(1500, lambda: self._run_async(self._refresh_token_status()))
         except Exception as e:
@@ -309,6 +381,22 @@ class AppController(QObject):
             except Exception as e:
                 self.token_status_changed.emit(f"保存 token 失败: {e}")
         self._run_async(_save())
+
+    async def _start_engine_checked(self):
+        """开启自动交易前先探测服务器连通性，未连接则取消切换并提示。"""
+        if self._vm is None:
+            return
+        try:
+            await check_server_health(self._vm.config.server_url)
+        except Exception as e:
+            self._toggle_rejected = True
+            self.bootstrap.event_bus.publish(
+                LogEvent(message=f"服务器未连接: {e}", level=LogLevel.ERROR)
+            )
+            self.auto_trade_rejected.emit()
+            return
+        self._handle_toggle_auto_trade(True)
+        await self._start_engine()
 
     async def _start_engine(self):
         if self._engine is None:

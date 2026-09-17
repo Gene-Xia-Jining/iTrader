@@ -1,7 +1,7 @@
 """Generate icon.png for the tray app.
 
 Run once to produce src/itrader/resources/icon.png.
-The icon is a dark rounded square with a yellow "T" (iTrader).
+The icon is a near-black rounded square with an Action Blue "T" (iTrader).
 """
 
 import sys
@@ -24,8 +24,8 @@ def render(size: int = 256) -> QPixmap:
     margin = size // 16
     bg_rect = pix.rect().adjusted(margin, margin, -margin, -margin)
     radius = size // 6
-    painter.setBrush(QColor("#1e1e2e"))
-    pen = QPen(QColor("#45475a"))
+    painter.setBrush(QColor("#272729"))
+    pen = QPen(QColor("#3a3a3c"))
     pen.setWidth(max(1, size // 64))
     painter.setPen(pen)
     painter.drawRoundedRect(bg_rect, radius, radius)
@@ -34,7 +34,7 @@ def render(size: int = 256) -> QPixmap:
     font = QFont("Helvetica Neue", int(size * 0.52))
     font.setBold(True)
     painter.setFont(font)
-    painter.setPen(QColor("#f9e2af"))
+    painter.setPen(QColor("#0066cc"))
     painter.drawText(bg_rect, Qt.AlignCenter, "T")
 
     painter.end()

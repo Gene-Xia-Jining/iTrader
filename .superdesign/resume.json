@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "/dashboard": {
+      "targetKind": "existing-ui",
+      "projectId": "b0c4a1c3-8310-467a-89ef-6a7acdb07e03",
+      "baselineDraftId": "d801f02d-7986-4f97-af8f-53d229adb9b2",
+      "activeDraftId": "c722c159-b9c2-4ee9-ba99-a74431283a55",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/presentation/theme.py:413:745",
+        "src/presentation/main_window.py:188:312",
+        "src/presentation/components.py",
+        "src/presentation/pages.py:38:100"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "ae97f9fe12bb6165715be221285ea007ad3767d884e76a9839a1d0e87fbc7b79",
+        "src/presentation/theme.py": "f2140c37dc8dc330ff11bcb5e639ca162ca46b9815ed16812fe26df72e861992",
+        "src/presentation/main_window.py": "81bbd1c14c85739f2b8f8aecb130937f2abab26c0dc683529ab4c469658382a6",
+        "src/presentation/components.py": "717ff37a476b52e0a1b9139b3de23dc05a78b932e3fd925b3ebe421d9c9aa65a",
+        "src/presentation/pages.py": "1734c3caaea840bb88888477aa0904e13882d99982e567ae0befa250ae84504f"
+      },
+      "components": [],
+      "drafts": {
+        "d801f02d-7986-4f97-af8f-53d229adb9b2": {
+          "title": "当前界面 — 仪表盘（复现基准）",
+          "visualDirection": "像素级复现，浅色 Apple 风格"
+        },
+        "b7789b55-312e-45c4-9366-1074a9a52657": {
+          "title": "精修仪表盘",
+          "visualDirection": "保持现有内容，强化层次与排版",
+          "parentDraftId": "d801f02d-7986-4f97-af8f-53d229adb9b2"
+        },
+        "c722c159-b9c2-4ee9-ba99-a74431283a55": {
+          "title": "交易工作台 — 仪表盘",
+          "visualDirection": "信息密度提升：指标卡 + 最近信号 + 最近日志",
+          "parentDraftId": "d801f02d-7986-4f97-af8f-53d229adb9b2",
+          "selected": true
+        }
+      },
+      "updatedAt": "2026-09-16T00:00:00+08:00"
+    },
+    "flow:token": {
+      "targetKind": "new-ui",
+      "projectId": "b0c4a1c3-8310-467a-89ef-6a7acdb07e03",
+      "activeDraftId": "fb7d497d-2b3e-41f9-b36c-8123ef57771f",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/presentation/theme.py:413:745",
+        "src/presentation/main_window.py:188:312",
+        "src/presentation/components.py",
+        "src/presentation/pages.py:38:100"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "ae97f9fe12bb6165715be221285ea007ad3767d884e76a9839a1d0e87fbc7b79",
+        "src/presentation/theme.py": "f2140c37dc8dc330ff11bcb5e639ca162ca46b9815ed16812fe26df72e861992",
+        "src/presentation/main_window.py": "81bbd1c14c85739f2b8f8aecb130937f2abab26c0dc683529ab4c469658382a6",
+        "src/presentation/components.py": "717ff37a476b52e0a1b9139b3de23dc05a78b932e3fd925b3ebe421d9c9aa65a",
+        "src/presentation/pages.py": "1734c3caaea840bb88888477aa0904e13882d99982e567ae0befa250ae84504f"
+      },
+      "components": [],
+      "sourceTarget": "/dashboard",
+      "sourceDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "parentDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "drafts": {
+        "fb7d497d-2b3e-41f9-b36c-8123ef57771f": {
+          "title": "Token 管理",
+          "visualDirection": "精修层次（与选中仪表盘稿同一方向）"
+        }
+      },
+      "updatedAt": "2026-09-16T00:00:00+08:00"
+    },
+    "flow:logs": {
+      "targetKind": "new-ui",
+      "projectId": "b0c4a1c3-8310-467a-89ef-6a7acdb07e03",
+      "activeDraftId": "febcd7ea-1b22-44a6-98a9-9d4cdf24413b",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/presentation/theme.py:413:745",
+        "src/presentation/main_window.py:188:312",
+        "src/presentation/components.py",
+        "src/presentation/pages.py:38:100"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "ae97f9fe12bb6165715be221285ea007ad3767d884e76a9839a1d0e87fbc7b79",
+        "src/presentation/theme.py": "f2140c37dc8dc330ff11bcb5e639ca162ca46b9815ed16812fe26df72e861992",
+        "src/presentation/main_window.py": "81bbd1c14c85739f2b8f8aecb130937f2abab26c0dc683529ab4c469658382a6",
+        "src/presentation/components.py": "717ff37a476b52e0a1b9139b3de23dc05a78b932e3fd925b3ebe421d9c9aa65a",
+        "src/presentation/pages.py": "1734c3caaea840bb88888477aa0904e13882d99982e567ae0befa250ae84504f"
+      },
+      "components": [],
+      "sourceTarget": "/dashboard",
+      "sourceDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "parentDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "drafts": {
+        "febcd7ea-1b22-44a6-98a9-9d4cdf24413b": {
+          "title": "交易日志",
+          "visualDirection": "精修层次（与选中仪表盘稿同一方向）"
+        }
+      },
+      "updatedAt": "2026-09-16T00:00:00+08:00"
+    },
+    "flow:account": {
+      "targetKind": "new-ui",
+      "projectId": "b0c4a1c3-8310-467a-89ef-6a7acdb07e03",
+      "activeDraftId": "763f5b24-62bf-45dc-abdf-9191319d55c4",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/presentation/theme.py:413:745",
+        "src/presentation/main_window.py:188:312",
+        "src/presentation/components.py",
+        "src/presentation/pages.py:38:100"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "ae97f9fe12bb6165715be221285ea007ad3767d884e76a9839a1d0e87fbc7b79",
+        "src/presentation/theme.py": "f2140c37dc8dc330ff11bcb5e639ca162ca46b9815ed16812fe26df72e861992",
+        "src/presentation/main_window.py": "81bbd1c14c85739f2b8f8aecb130937f2abab26c0dc683529ab4c469658382a6",
+        "src/presentation/components.py": "717ff37a476b52e0a1b9139b3de23dc05a78b932e3fd925b3ebe421d9c9aa65a",
+        "src/presentation/pages.py": "1734c3caaea840bb88888477aa0904e13882d99982e567ae0befa250ae84504f"
+      },
+      "components": [],
+      "sourceTarget": "/dashboard",
+      "sourceDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "parentDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "drafts": {
+        "763f5b24-62bf-45dc-abdf-9191319d55c4": {
+          "title": "交易账号",
+          "visualDirection": "精修层次（与选中仪表盘稿同一方向）"
+        }
+      },
+      "updatedAt": "2026-09-16T00:00:00+08:00"
+    },
+    "flow:settings": {
+      "targetKind": "new-ui",
+      "projectId": "b0c4a1c3-8310-467a-89ef-6a7acdb07e03",
+      "activeDraftId": "29c8ee3d-099d-4094-8e11-a258e3667d5d",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/presentation/theme.py:413:745",
+        "src/presentation/main_window.py:188:312",
+        "src/presentation/components.py",
+        "src/presentation/pages.py:38:100"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "ae97f9fe12bb6165715be221285ea007ad3767d884e76a9839a1d0e87fbc7b79",
+        "src/presentation/theme.py": "f2140c37dc8dc330ff11bcb5e639ca162ca46b9815ed16812fe26df72e861992",
+        "src/presentation/main_window.py": "81bbd1c14c85739f2b8f8aecb130937f2abab26c0dc683529ab4c469658382a6",
+        "src/presentation/components.py": "717ff37a476b52e0a1b9139b3de23dc05a78b932e3fd925b3ebe421d9c9aa65a",
+        "src/presentation/pages.py": "1734c3caaea840bb88888477aa0904e13882d99982e567ae0befa250ae84504f"
+      },
+      "components": [],
+      "sourceTarget": "/dashboard",
+      "sourceDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "parentDraftId": "b7789b55-312e-45c4-9366-1074a9a52657",
+      "drafts": {
+        "29c8ee3d-099d-4094-8e11-a258e3667d5d": {
+          "title": "设置",
+          "visualDirection": "精修层次（与选中仪表盘稿同一方向）"
+        }
+      },
+      "updatedAt": "2026-09-16T00:00:00+08:00"
+    }
+  }
+}

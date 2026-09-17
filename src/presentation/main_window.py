@@ -32,120 +32,6 @@ from .theme import qss_for, status_color
 from .viewmodels import ConfigDialogViewModel, MainViewModel
 
 
-DARK_QSS = """
-QMainWindow, QWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    font-size: 13px;
-}
-QGroupBox {
-    border: 1px solid #45475a;
-    border-radius: 8px;
-    margin-top: 10px;
-    padding-top: 16px;
-    font-weight: bold;
-    color: #bac2de;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
-}
-QPushButton {
-    background-color: #89b4fa;
-    color: #1e1e2e;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-weight: bold;
-}
-QPushButton:hover {
-    background-color: #b4befe;
-}
-QPushButton:disabled {
-    background-color: #45475a;
-    color: #7f849c;
-}
-QPushButton#danger {
-    background-color: #f38ba8;
-    color: #1e1e2e;
-}
-QPushButton#danger:hover {
-    background-color: #eba0ac;
-}
-QLineEdit, QTextEdit {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 6px 8px;
-    color: #cdd6f4;
-}
-QLineEdit:focus, QTextEdit:focus {
-    border: 1px solid #89b4fa;
-}
-QLabel {
-    color: #bac2de;
-}
-QCheckBox {
-    color: #bac2de;
-    spacing: 6px;
-}
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
-    border: 1px solid #585b70;
-    background-color: #313244;
-}
-QCheckBox::indicator:checked {
-    background-color: #a6e3a1;
-    border: 1px solid #a6e3a1;
-}
-QMenuBar {
-    background-color: #181825;
-    border-bottom: 1px solid #313244;
-}
-QMenuBar::item {
-    padding: 6px 14px;
-    background: transparent;
-    color: #bac2de;
-}
-QMenuBar::item:selected {
-    background-color: #45475a;
-    color: #ffffff;
-}
-QMenu {
-    background-color: #1e1e2e;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 6px;
-}
-QMenu::item {
-    padding: 6px 20px;
-    color: #cdd6f4;
-    border-radius: 4px;
-}
-QMenu::item:selected {
-    background-color: #45475a;
-}
-QStatusBar {
-    background-color: #181825;
-    color: #bac2de;
-    border-top: 1px solid #313244;
-}
-QSplitter::handle {
-    background-color: #313244;
-    width: 2px;
-}
-QDialog {
-    background-color: #1e1e2e;
-}
-QMessageBox {
-    background-color: #1e1e2e;
-}
-"""
-
-
 class ConfigDialog(QDialog):
     def __init__(
         self,
@@ -245,6 +131,9 @@ class MainWindow(QMainWindow):
         on_save_config,
         on_save_account=None,
         on_test_server=None,
+        on_fetch_symbols=None,
+        on_fetch_exchanges=None,
+        on_submit_symbol=None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -258,11 +147,14 @@ class MainWindow(QMainWindow):
         self._on_save_config = on_save_config
         self._on_save_account = on_save_account
         self._on_test_server = on_test_server
+        self._on_fetch_symbols = on_fetch_symbols
+        self._on_fetch_exchanges = on_fetch_exchanges
+        self._on_submit_symbol = on_submit_symbol
 
-        self.setWindowTitle("iTrader 智能交易客户端")
+        self.setWindowTitle("iTrader 智能交易系统")
         self.resize(1180, 760)
         self.setMinimumSize(QSize(960, 620))
-        self._dark = True
+        self._dark = False
         self.setStyleSheet(qss_for(self._dark))
         self._build_menubar()
         self._build_ui()
@@ -311,15 +203,9 @@ class MainWindow(QMainWindow):
         head_layout = QHBoxLayout(head)
         head_layout.setContentsMargins(20, 14, 20, 14)
         head_layout.setSpacing(12)
-        brand = QVBoxLayout()
-        brand.setSpacing(2)
-        brand_label = QLabel("iTrader", head)
+        brand_label = QLabel("iTrader 智能交易系统", head)
         brand_label.setObjectName("title")
-        brand_sub = QLabel("智能交易客户端", head)
-        brand_sub.setObjectName("subtitle")
-        brand.addWidget(brand_label)
-        brand.addWidget(brand_sub)
-        head_layout.addLayout(brand)
+        head_layout.addWidget(brand_label)
         head_layout.addStretch(1)
         self._head_auto_btn = make_button("", variant="")
         self._head_auto_btn.setToolTip("点击启动/停止自动交易")
@@ -381,6 +267,9 @@ class MainWindow(QMainWindow):
         # Connect settings page save callback
         self.settings_page.on_save = self._on_save_config
         self.settings_page.server_test.on_test = self._on_test_server
+        self.settings_page.on_fetch_symbols = self._on_fetch_symbols
+        self.settings_page.on_fetch_exchanges = self._on_fetch_exchanges
+        self.settings_page.on_submit_symbol = self._on_submit_symbol
         self.settings_page.set_config(self._vm.config)
         # Connect account page save callback
         self.account_page.on_save = self._on_save_account
@@ -419,11 +308,44 @@ class MainWindow(QMainWindow):
         self.log_btn.setChecked(index == 2)
         self.account_btn.setChecked(index == 3)
         self.settings_btn.setChecked(index == 4)
+        if index == 4:
+            self.settings_page.maybe_refresh_symbols()
 
     def _build_statusbar(self):
         bar = self.statusBar()
         self._status_text = QLabel("就绪")
         bar.addWidget(self._status_text, 1)
+
+        indicators = QWidget()
+        indicators_layout = QHBoxLayout(indicators)
+        indicators_layout.setContentsMargins(0, 0, 10, 0)
+        indicators_layout.setSpacing(6)
+        self._server_dot = QLabel(indicators)
+        self._server_dot.setFixedSize(6, 6)
+        self._server_label = QLabel("服务器: 未连接", indicators)
+        self._server_label.setObjectName("dim")
+        self._trade_dot = QLabel(indicators)
+        self._trade_dot.setFixedSize(6, 6)
+        self._trade_label = QLabel("交易: 已停止", indicators)
+        self._trade_label.setObjectName("dim")
+        indicators_layout.addWidget(self._server_dot)
+        indicators_layout.addWidget(self._server_label)
+        indicators_layout.addSpacing(12)
+        indicators_layout.addWidget(self._trade_dot)
+        indicators_layout.addWidget(self._trade_label)
+        bar.addPermanentWidget(indicators)
+        self._sync_status_indicators()
+
+    def _sync_status_indicators(self):
+        """状态栏右侧的服务器/交易状态指示器与 ViewModel 保持一致。"""
+        self._server_dot.setStyleSheet(
+            "background-color: %s; border-radius: 3px; border: 0;" % self._vm.serverStatusColor
+        )
+        self._server_label.setText(f"服务器: {self._vm.serverStatus}")
+        self._trade_dot.setStyleSheet(
+            "background-color: %s; border-radius: 3px; border: 0;" % self._vm.tradingStatusColor
+        )
+        self._trade_label.setText(f"交易: {self._vm.tradingStatus}")
 
     def _bind_vm(self):
         self._vm.serverStatusChanged.connect(self._on_server_status_changed)
@@ -438,33 +360,52 @@ class MainWindow(QMainWindow):
         self._vm.configChanged.connect(
             lambda: self.account_page.set_config(self._vm.config)
         )
+        self._vm.configChanged.connect(self._refresh_dashboard_metrics)
         self._on_server_status_changed(self._vm.serverStatus)
         self._on_server_status_color_changed(self._vm.serverStatusColor)
         self._on_trade_status_changed(self._vm.tradingStatus)
         self._on_trade_status_color_changed(self._vm.tradingStatusColor)
+        self._refresh_dashboard_metrics()
 
     def _on_server_status_changed(self, value: str):
         self.dashboard_page.server_status.set_status(value, self._vm.serverStatusColor)
+        self._sync_status_indicators()
 
     def _on_server_status_color_changed(self, color: str):
         self.dashboard_page.server_status.set_status(self._vm.serverStatus, color)
 
     def _on_trade_status_changed(self, value: str):
         self.dashboard_page.trade_status.set_status(value, self._vm.tradingStatusColor)
+        self._sync_status_indicators()
+        self._sync_trade_caption()
         self._status_text.setText(f"交易状态: {value}")
         self._sync_auto_trade_button(self._vm.tradingActive)
+
+    def _refresh_dashboard_metrics(self):
+        """配置变化时同步仪表盘的资金、品种数与服务器地址说明。"""
+        config = self._vm.config
+        self.dashboard_page.balance_card.set_value(f"{config.initial_balance:,.2f}")
+        self.dashboard_page.symbols_card.set_value(str(len(config.symbols)))
+        self.dashboard_page.server_status.set_secondary(config.server_url or "未配置服务器地址")
+
+    def _sync_trade_caption(self):
+        self.dashboard_page.trade_status.set_secondary(
+            "自动交易运行中" if self._vm.tradingActive else "自动交易未启动"
+        )
 
     def _on_trade_status_color_changed(self, color: str):
         self.dashboard_page.trade_status.set_status(self._vm.tradingStatus, color)
 
     def set_token_status(self, text: str):
         self.token_page.token_status_label.setText(text)
-        self.token_page.token_status_label.setStyleSheet(f"color: {status_color(text)};")
+        self.token_page.token_status_label.setStyleSheet(
+            f"color: {status_color(text)}; background: transparent;"
+        )
         if "已通过" in text:
             self.token_page.token_status_btn.setEnabled(True)
 
     def _on_apply_token(self):
-        description = self.token_page.token_description_edit.text().strip() or "iTrader 智能交易客户端"
+        description = self.token_page.token_description_edit.text().strip() or "iTrader 智能交易系统"
         self._on_open_token(description)
 
     def _on_refresh_token(self):
@@ -501,19 +442,31 @@ class MainWindow(QMainWindow):
         cursor.insertText(text + "\n", fmt)
         self.log_page.log_view.setTextCursor(cursor)
         self.log_page.log_view.ensureCursorVisible()
+        preview = self.dashboard_page.log_preview
+        preview_cursor = preview.textCursor()
+        preview_cursor.movePosition(QTextCursor.End)
+        # 换行前置而非尾部追加，避免空尾块占用 maximumBlockCount 配额
+        prefix = "\n" if preview_cursor.position() > 0 else ""
+        preview_cursor.insertText(prefix + text, QTextCharFormat(fmt))
+        preview.setTextCursor(preview_cursor)
+        preview.ensureCursorVisible()
         self._status_text.setText(text[:60])
 
     def clear_logs(self):
         self.log_page.log_view.clear()
+        self.dashboard_page.log_preview.clear()
 
     def save_approved_token(self, data: dict):
         QMessageBox.information(self, "Token 已保存", "Token 已保存到本地，可启动自动交易。")
 
+    def show_server_not_connected(self):
+        QMessageBox.warning(self, "自动交易", "服务器未连接")
+
     def show_about(self):
         QMessageBox.information(
             self,
-            "关于 iTrader 智能交易客户端",
-            "iTrader 智能交易客户端\n版本 %s\n\n基于 Clean Architecture + PySide6 构建" % __version__,
+            "关于 iTrader 智能交易系统",
+            "iTrader 智能交易系统\n版本 %s\n\n基于 Clean Architecture + PySide6 构建" % __version__,
         )
 
     def ask_confirm_quit(self) -> bool:
