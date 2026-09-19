@@ -220,6 +220,14 @@ class LogPage(BasePage):
         self.content_layout.addWidget(self.log_view, 1)
 
 
+class SimulationPage(BasePage):
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.header = PageHeader("模拟交易", "模拟盘交易功能建设中。")
+        self.content_layout.addWidget(self.header)
+        self.add_stretch()
+
+
 class FlowLayout(QLayout):
     """横向流式布局：子控件按行横向排列，超出可用宽度自动换行。"""
 
@@ -659,7 +667,7 @@ class SettingsPage(BasePage):
 class AccountPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.header = PageHeader("交易账号", "天勤账号、密码、资金与品种配置，保存后即时生效。")
+        self.header = PageHeader("实盘交易", "期货公司、资金账号、交易密码与天勤配置，保存后即时生效。")
         self.content_layout.addWidget(self.header)
 
         card = Card()
@@ -686,6 +694,15 @@ class AccountPage(BasePage):
         self._broker_group.setExclusive(True)
         self._broker_rows: list[QWidget] = []
         form.addRow("期货公司:", self.broker_area)
+
+        self.trade_account_edit = QLineEdit()
+        self.trade_account_edit.setPlaceholderText("资金账号 (实盘必填)")
+        form.addRow("资金账号:", self.trade_account_edit)
+
+        self.trade_password_edit = QLineEdit()
+        self.trade_password_edit.setPlaceholderText("交易密码 (实盘必填)")
+        self.trade_password_edit.setEchoMode(QLineEdit.Password)
+        form.addRow("交易密码:", self.trade_password_edit)
 
         self.tq_account_edit = QLineEdit()
         self.tq_account_edit.setPlaceholderText("天勤账号")
@@ -735,6 +752,8 @@ class AccountPage(BasePage):
 
     def set_config(self, config: TradingConfiguration):
         """用当前配置填充表单（启动时以及配置保存后调用）。"""
+        self.trade_account_edit.setText(config.trade_account)
+        self.trade_password_edit.setText(config.trade_password)
         self.tq_account_edit.setText(config.tq_account)
         self.tq_password_edit.setText(config.tq_password)
         self.balance_edit.setText(str(config.initial_balance))
@@ -782,6 +801,8 @@ class AccountPage(BasePage):
     def _on_save_clicked(self):
         data = {
             "broker": self._selected_broker(),
+            "trade_account": self.trade_account_edit.text().strip(),
+            "trade_password": self.trade_password_edit.text(),
             "tq_account": self.tq_account_edit.text().strip(),
             "tq_password": self.tq_password_edit.text(),
             "initial_balance": self.balance_edit.text().strip(),
@@ -791,6 +812,9 @@ class AccountPage(BasePage):
         # Validate
         if not data["broker"]:
             QMessageBox.warning(self, "输入错误", "请选择期货公司")
+            return
+        if (data["trade_account"] and not data["trade_password"]) or (data["trade_password"] and not data["trade_account"]):
+            QMessageBox.warning(self, "输入错误", "资金账号与交易密码需同时填写")
             return
         if not data["tq_account"]:
             QMessageBox.warning(self, "输入错误", "天勤账号不能为空")

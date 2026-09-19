@@ -73,9 +73,17 @@ class Bootstrap:
 
     def build_trading_executor(self) -> TqSdkTradingExecutor:
         if self._trading_executor is None:
+            from ..infrastructure.config.broker_store import BrokerStore
+            broker_store = BrokerStore(str(Path(self.db_path).parent / "broker.json"))
+            broker_data = broker_store.load()
+            broker = broker_data.get("selected", "")
+
             self._trading_executor = TqSdkTradingExecutor(
                 account=self.config.tq_account,
                 password=self.config.tq_password,
+                trade_account=self.config.trade_account,
+                trade_password=self.config.trade_password,
+                broker=broker,
                 initial_balance=self.config.initial_balance,
             )
         return self._trading_executor

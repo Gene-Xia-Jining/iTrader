@@ -38,4 +38,6 @@ class TradingConfiguration:
     tq_account: str
     tq_password: str
     initial_balance: float
+    trade_account: str = ""
+    trade_password: str = ""
     database_path: str = "data/client.db"

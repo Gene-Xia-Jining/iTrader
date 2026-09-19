@@ -208,6 +208,8 @@ class AppController(QObject):
                 auto_trade=current_config.auto_trade,
                 tq_account=data["tq_account"],
                 tq_password=data["tq_password"],
+                trade_account=data["trade_account"],
+                trade_password=data["trade_password"],
                 initial_balance=data["initial_balance"],
                 database_path=current_config.database_path,
             )
@@ -255,6 +257,8 @@ class AppController(QObject):
             auto_trade=current.auto_trade,
             tq_account=data.get("tq_account", current.tq_account),
             tq_password=data.get("tq_password", current.tq_password),
+            trade_account=data.get("trade_account", current.trade_account),
+            trade_password=data.get("trade_password", current.trade_password),
             initial_balance=initial_balance,
             database_path=current.database_path,
         )

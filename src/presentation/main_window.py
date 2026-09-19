@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..domain.entities import TradingConfiguration
 from .components import SidebarButton
-from .pages import AccountPage, DashboardPage, make_button, LogPage, ServerUrlTestRow, SettingsPage, TokenPage
+from .pages import AccountPage, DashboardPage, make_button, LogPage, ServerUrlTestRow, SettingsPage, SimulationPage, TokenPage
 from .theme import qss_for, status_color
 from .viewmodels import ConfigDialogViewModel, MainViewModel
 
@@ -239,12 +239,14 @@ class MainWindow(QMainWindow):
         self.dashboard_btn = SidebarButton("仪表盘", sidebar)
         self.token_btn = SidebarButton("Token 管理", sidebar)
         self.log_btn = SidebarButton("交易日志", sidebar)
-        self.account_btn = SidebarButton("交易账号", sidebar)
+        self.simulation_btn = SidebarButton("模拟交易", sidebar)
+        self.account_btn = SidebarButton("实盘交易", sidebar)
         self.settings_btn = SidebarButton("设置", sidebar)
         for button in (
             self.dashboard_btn,
             self.token_btn,
             self.log_btn,
+            self.simulation_btn,
             self.account_btn,
             self.settings_btn,
         ):
@@ -253,8 +255,9 @@ class MainWindow(QMainWindow):
         self.dashboard_btn.clicked.connect(lambda: self._switch_page(0))
         self.token_btn.clicked.connect(lambda: self._switch_page(1))
         self.log_btn.clicked.connect(lambda: self._switch_page(2))
-        self.account_btn.clicked.connect(lambda: self._switch_page(3))
-        self.settings_btn.clicked.connect(lambda: self._switch_page(4))
+        self.simulation_btn.clicked.connect(lambda: self._switch_page(3))
+        self.account_btn.clicked.connect(lambda: self._switch_page(4))
+        self.settings_btn.clicked.connect(lambda: self._switch_page(5))
         sidebar_layout.addLayout(nav)
         sidebar_layout.addStretch(1)
 
@@ -262,6 +265,7 @@ class MainWindow(QMainWindow):
         self.dashboard_page = DashboardPage()
         self.token_page = TokenPage()
         self.log_page = LogPage()
+        self.simulation_page = SimulationPage()
         self.account_page = AccountPage()
         self.settings_page = SettingsPage()
         # Connect settings page save callback
@@ -278,13 +282,14 @@ class MainWindow(QMainWindow):
             self.dashboard_page,
             self.token_page,
             self.log_page,
+            self.simulation_page,
             self.account_page,
             self.settings_page,
         ):
             self.stack.addWidget(page)
         self.stack.setCurrentIndex(0)
 
-        self.dashboard_page.config_btn.clicked.connect(lambda: self._switch_page(4))
+        self.dashboard_page.config_btn.clicked.connect(lambda: self._switch_page(5))
         self.dashboard_page.token_btn.clicked.connect(lambda: self._switch_page(1))
         self.dashboard_page.clear_logs_btn.clicked.connect(self._on_clear_logs)
 
@@ -306,9 +311,10 @@ class MainWindow(QMainWindow):
         self.dashboard_btn.setChecked(index == 0)
         self.token_btn.setChecked(index == 1)
         self.log_btn.setChecked(index == 2)
-        self.account_btn.setChecked(index == 3)
-        self.settings_btn.setChecked(index == 4)
-        if index == 4:
+        self.simulation_btn.setChecked(index == 3)
+        self.account_btn.setChecked(index == 4)
+        self.settings_btn.setChecked(index == 5)
+        if index == 5:
             self.settings_page.maybe_refresh_symbols()
 
     def _build_statusbar(self):

@@ -174,6 +174,8 @@ class ConfigDialogViewModel(QObject):
             "server_url": server_url.strip(),
             "tq_account": tq_account,
             "tq_password": tq_password,
+            "trade_account": self._config.trade_account,
+            "trade_password": self._config.trade_password,
             "initial_balance": initial_balance,
             "symbols": symbols,
         }

@@ -30,11 +30,21 @@ class ConfigService:
                     auto_trade INTEGER NOT NULL,
                     tq_account TEXT NOT NULL,
                     tq_password TEXT NOT NULL,
+                    trade_account TEXT NOT NULL DEFAULT '',
+                    trade_password TEXT NOT NULL DEFAULT '',
                     initial_balance REAL NOT NULL,
                     database TEXT NOT NULL,
                     CHECK (id = 1)
                 )
             """)
+            try:
+                db.execute("ALTER TABLE app_config ADD COLUMN trade_account TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                db.execute("ALTER TABLE app_config ADD COLUMN trade_password TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             db.commit()
 
     def load(self) -> TradingConfiguration:
@@ -49,6 +59,8 @@ class ConfigService:
                 tq_account=row["tq_account"],
                 tq_password=row["tq_password"],
                 initial_balance=row["initial_balance"],
+                trade_account=row["trade_account"] if "trade_account" in row.keys() else "",
+                trade_password=row["trade_password"] if "trade_password" in row.keys() else "",
                 database_path=row["database"],
             )
         # 首次运行：写入默认配置
@@ -59,6 +71,8 @@ class ConfigService:
             tq_account="",
             tq_password="",
             initial_balance=10_000_000,
+            trade_account="",
+            trade_password="",
             database_path=self.db_path,
         )
         self.save(config)
@@ -68,14 +82,16 @@ class ConfigService:
         with self._conn() as db:
             db.execute("""
                 INSERT INTO app_config
-                    (id, server_url, symbols, auto_trade, tq_account, tq_password, initial_balance, database)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                    (id, server_url, symbols, auto_trade, tq_account, tq_password, trade_account, trade_password, initial_balance, database)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     server_url = excluded.server_url,
                     symbols = excluded.symbols,
                     auto_trade = excluded.auto_trade,
                     tq_account = excluded.tq_account,
                     tq_password = excluded.tq_password,
+                    trade_account = excluded.trade_account,
+                    trade_password = excluded.trade_password,
                     initial_balance = excluded.initial_balance,
                     database = excluded.database
             """, (
@@ -84,6 +100,8 @@ class ConfigService:
                 int(config.auto_trade),
                 config.tq_account,
                 config.tq_password,
+                config.trade_account,
+                config.trade_password,
                 config.initial_balance,
                 config.database_path,
             ))

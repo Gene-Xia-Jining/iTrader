@@ -8,10 +8,16 @@ class TqSdkTradingExecutor(TradingExecutor):
         self,
         account: str,
         password: str,
-        initial_balance: float,
+        trade_account: str = "",
+        trade_password: str = "",
+        broker: str = "",
+        initial_balance: float = 10000000.0,
     ):
         self._account = account
         self._password = password
+        self._trade_account = trade_account
+        self._trade_password = trade_password
+        self._broker = broker
         self._initial_balance = initial_balance
         self._api = None
         self.tasks: dict[str, 'TargetPosTask'] = {}
@@ -19,9 +25,15 @@ class TqSdkTradingExecutor(TradingExecutor):
     @property
     def api(self):
         if self._api is None:
-            from tqsdk import TqApi, TqSim, TqAuth
+            from tqsdk import TqApi, TqSim, TqAccount, TqAuth
+            
+            if self._broker and self._trade_account and self._trade_password:
+                account_obj = TqAccount(self._broker, self._trade_account, self._trade_password)
+            else:
+                account_obj = TqSim(init_balance=self._initial_balance)
+                
             self._api = TqApi(
-                TqSim(init_balance=self._initial_balance),
+                account_obj,
                 auth=TqAuth(self._account, self._password),
             )
         return self._api

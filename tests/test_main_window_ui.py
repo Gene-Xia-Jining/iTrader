@@ -41,6 +41,8 @@ class MainWindowUiTest(unittest.TestCase):
         self.assertEqual(calls, ["quit"])
         self.assertTrue(window.token_page.token_status_btn.isEnabled())
         self.assertEqual(window.log_page.log_view.toPlainText(), "")
+        self.assertEqual(window.account_btn.accessibleName(), "实盘交易")
+        self.assertEqual(window.simulation_btn.accessibleName(), "模拟交易")
 
     def test_head_auto_trade_button_follows_engine_state(self):
         bus = EventBus()
