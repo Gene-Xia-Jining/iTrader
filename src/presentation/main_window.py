@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -62,11 +63,11 @@ class ConfigDialog(QDialog):
         form.addRow("服务器地址:", self.server_test)
 
         self.tq_account_edit = QLineEdit(self._vm.tq_account)
-        form.addRow("天勤账号:", self.tq_account_edit)
+        form.addRow("快期账号:", self.tq_account_edit)
 
         self.tq_password_edit = QLineEdit(self._vm.tq_password)
         self.tq_password_edit.setEchoMode(QLineEdit.Password)
-        form.addRow("天勤密码:", self.tq_password_edit)
+        form.addRow("快期密码:", self.tq_password_edit)
 
         self.balance_edit = QLineEdit(str(self._vm.initial_balance))
         self.balance_edit.setPlaceholderText("10000000")
@@ -130,10 +131,14 @@ class MainWindow(QMainWindow):
         on_quit,
         on_save_config,
         on_save_account=None,
+        on_save_simulation=None,
+        on_test_simulation=None,
         on_test_server=None,
         on_fetch_symbols=None,
         on_fetch_exchanges=None,
         on_submit_symbol=None,
+        on_check_update=None,
+        on_cancel_update=None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -146,10 +151,15 @@ class MainWindow(QMainWindow):
         self._on_quit = on_quit
         self._on_save_config = on_save_config
         self._on_save_account = on_save_account
+        self._on_save_simulation = on_save_simulation
+        self._on_test_simulation = on_test_simulation
         self._on_test_server = on_test_server
         self._on_fetch_symbols = on_fetch_symbols
         self._on_fetch_exchanges = on_fetch_exchanges
         self._on_submit_symbol = on_submit_symbol
+        self._on_check_update = on_check_update
+        self._on_cancel_update = on_cancel_update
+        self._update_progress_dlg = None
 
         self.setWindowTitle("iTrader 智能交易系统")
         self.resize(1180, 760)
@@ -186,6 +196,9 @@ class MainWindow(QMainWindow):
         bar.addMenu(view_menu)
 
         help_menu = QMenu("帮助", self)
+        check_update_action = QAction("检查更新...", self)
+        check_update_action.triggered.connect(self.start_check_update)
+        help_menu.addAction(check_update_action)
         about_action = QAction("关于", self)
         about_action.triggered.connect(self._on_show_about)
         help_menu.addAction(about_action)
@@ -274,10 +287,15 @@ class MainWindow(QMainWindow):
         self.settings_page.on_fetch_symbols = self._on_fetch_symbols
         self.settings_page.on_fetch_exchanges = self._on_fetch_exchanges
         self.settings_page.on_submit_symbol = self._on_submit_symbol
+        self.settings_page.on_check_update = self._on_check_update
         self.settings_page.set_config(self._vm.config)
         # Connect account page save callback
         self.account_page.on_save = self._on_save_account
         self.account_page.set_config(self._vm.config)
+        # Connect simulation page save callback
+        self.simulation_page.on_save = self._on_save_simulation
+        self.simulation_page.on_test = self._on_test_simulation
+        self.simulation_page.set_config(self._vm.config)
         for page in (
             self.dashboard_page,
             self.token_page,
@@ -365,6 +383,9 @@ class MainWindow(QMainWindow):
         )
         self._vm.configChanged.connect(
             lambda: self.account_page.set_config(self._vm.config)
+        )
+        self._vm.configChanged.connect(
+            lambda: self.simulation_page.set_config(self._vm.config)
         )
         self._vm.configChanged.connect(self._refresh_dashboard_metrics)
         self._on_server_status_changed(self._vm.serverStatus)
@@ -474,6 +495,86 @@ class MainWindow(QMainWindow):
             "关于 iTrader 智能交易系统",
             "iTrader 智能交易系统\n版本 %s\n\n基于 Clean Architecture + PySide6 构建" % __version__,
         )
+
+    # -------- 自动更新 --------
+
+    def start_check_update(self):
+        """检查更新统一入口（帮助菜单/设置页），结果回显在设置页状态区。"""
+        self.settings_page.start_check_update()
+
+    def show_update_available(self, release) -> str:
+        """发现新版本对话框，返回用户选择：update / skip / page / later。"""
+        notes = (release.notes or "").strip()
+        if len(notes) > 600:
+            notes = notes[:600] + "…"
+        box = QMessageBox(self)
+        box.setWindowTitle("发现新版本")
+        box.setText(f"发现新版本 v{release.version}，当前版本 v{__version__}")
+        if notes:
+            box.setInformativeText(notes)
+        update_btn = box.addButton("立即更新", QMessageBox.AcceptRole)
+        page_btn = box.addButton("打开下载页", QMessageBox.ActionRole)
+        skip_btn = box.addButton("跳过此版本", QMessageBox.ActionRole)
+        box.addButton("稍后", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is update_btn:
+            return "update"
+        if clicked is skip_btn:
+            return "skip"
+        if clicked is page_btn:
+            return "page"
+        return "later"
+
+    def begin_update_progress(self):
+        """创建下载进度对话框（模态，可取消，取消经回调转发给控制器）。"""
+        dlg = QProgressDialog("正在下载更新…", "取消", 0, 100, self)
+        dlg.setWindowTitle("正在更新 iTrader")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setMinimumWidth(380)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.canceled.connect(self._on_update_cancel_clicked)
+        self._update_progress_dlg = dlg
+        dlg.show()
+
+    def set_update_progress(self, pct: int, received: int, total: int):
+        dlg = self._update_progress_dlg
+        if dlg is None:
+            return
+        if total > 0:
+            dlg.setLabelText(
+                f"正在下载更新… {received / 1048576:.1f} / {total / 1048576:.1f} MB"
+            )
+        else:
+            dlg.setLabelText(f"正在下载更新… 已下载 {received / 1048576:.1f} MB")
+        if pct >= 0:
+            dlg.setValue(pct)
+
+    def finish_update_progress(self):
+        """关闭下载进度对话框（完成/失败/取消时调用，不触发取消信号）。"""
+        dlg = self._update_progress_dlg
+        self._update_progress_dlg = None
+        if dlg is not None:
+            dlg.reset()
+            dlg.deleteLater()
+
+    def _on_update_cancel_clicked(self):
+        if self._on_cancel_update is not None:
+            self._on_cancel_update()
+
+    def show_update_ready(self, kind_label: str) -> bool:
+        return QMessageBox.question(
+            self,
+            "更新已就绪",
+            f"{kind_label}已下载完成，将退出应用并完成安装。\n是否立即重启？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        ) == QMessageBox.Yes
+
+    def show_update_error(self, message: str):
+        QMessageBox.warning(self, "更新失败", message)
 
     def ask_confirm_quit(self) -> bool:
         return QMessageBox.question(

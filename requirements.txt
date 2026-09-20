@@ -3,6 +3,7 @@ aiosqlite==0.22.1
 pydantic==2.13.5
 tqsdk==3.10.2
 PySide6_Essentials==6.11.2
+cryptography==50.0.1
 
 # build tooling
 pyinstaller==6.22.3

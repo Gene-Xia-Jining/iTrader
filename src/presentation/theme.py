@@ -319,6 +319,12 @@ QLabel#subtitle, QLabel#metric, QLabel#tokenStatus, QLabel#serverStatus, QLabel#
     background: transparent;
 }
 
+/* 卡片内的透明容器：行容器若用 inline stylesheet 设置透明，会隔断 app QSS
+   对其子孙按钮的类型级规则（QPushButton 背景失效），objectName 规则不受影响 */
+QWidget#transparentBox {
+    background: transparent;
+}
+
 QLabel#muted, QLabel#dim {
     color: #cccccc;
 }
@@ -674,6 +680,12 @@ QFrame#soft {
 /* 匹配到 QSS 的 QLabel 会以窗口底色填充背景，白色卡片内露出灰条，强制透明 */
 QLabel#muted, QLabel#dim, QLabel#metricLabel, QLabel#title,
 QLabel#subtitle, QLabel#metric, QLabel#tokenStatus, QLabel#serverStatus, QLabel#tradeStatus {
+    background: transparent;
+}
+
+/* 卡片内的透明容器：行容器若用 inline stylesheet 设置透明，会隔断 app QSS
+   对其子孙按钮的类型级规则（QPushButton 背景失效），objectName 规则不受影响 */
+QWidget#transparentBox {
     background: transparent;
 }
 

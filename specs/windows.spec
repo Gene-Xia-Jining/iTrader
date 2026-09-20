@@ -1,21 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+from PyInstaller.building.datastruct import Tree
+from PyInstaller.utils.hooks import collect_all
 
 # SPECPATH 是 PyInstaller 注入的 spec 文件所在目录
 ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 SRC = os.path.join(ROOT, 'src')
 
+# src 整目录作为数据外置（不打进 PYZ）：补丁更新只需替换该目录；
+# 排除 __pycache__ 避免把开发态缓存打进包。
+# Tree 项为 (dest, src, kind) 且 dest 是完整文件路径；Analysis 的 datas
+# 语义是 (源文件, 目标目录)，故取 dest 的目录部分
 datas = [
-    (os.path.join(SRC, 'resources', 'icon.png'), 'src/resources'),
+    (src, os.path.dirname(dest))
+    for dest, src, _kind in Tree(SRC, prefix='src', excludes=['*__pycache__*', '*.pyc'])
 ]
 binaries = []
 hiddenimports = [
-    # clean-architecture src package
-    'src',
-    *collect_submodules('src'),
-    # deps
+    # deps（src 由上面 datas 外置，运行时经 runtime_hook 加入的路径加载）
     'aiosqlite',
     'httpx',
     'pydantic',
@@ -80,20 +84,26 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='iTrader',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
+)
+
+# onedir 产物 dist/iTrader/（顶层 iTrader.exe + _internal/）：
+# 自动更新按程序目录整体替换，也支持替换 _internal/src 完成差量更新
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='iTrader',
 )

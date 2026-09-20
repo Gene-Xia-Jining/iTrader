@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from typing import Optional, Union
 
 import httpx
@@ -83,28 +82,6 @@ def _auth_headers(token_service: Optional["TokenApiService"]) -> dict:
         return {}
     return token_service.get_auth_headers()
 
-
-class FileTokenStore(TokenStore):
-    def __init__(self, token_dir: Union[Path, str] = "data/tokens"):
-        self.token_dir = Path(token_dir)
-        self.token_dir.mkdir(parents=True, exist_ok=True)
-
-    def have_token(self) -> bool:
-        return (self.token_dir / "api_token.txt").exists()
-
-    def load_token(self) -> Optional[str]:
-        token_path = self.token_dir / "api_token.txt"
-        if token_path.exists():
-            return token_path.read_text(encoding="utf-8").strip()
-        return None
-
-    def save_token(self, token: str) -> None:
-        (self.token_dir / "api_token.txt").write_text(token, encoding="utf-8")
-
-    def delete_token(self) -> None:
-        token_path = self.token_dir / "api_token.txt"
-        if token_path.exists():
-            token_path.unlink()
 
 class TokenApiService:
     def __init__(self, server_url: str, token_store: TokenStore, client_id: str):

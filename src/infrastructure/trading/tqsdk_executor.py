@@ -3,6 +3,18 @@ import asyncio
 from ...domain.services import TradingExecutor
 
 
+def test_tq_auth_connection(account: str, password: str) -> None:
+    """验证快期账户能否登录：构造 TqApi 完成 auth 握手后立即关闭。
+
+    阻塞调用（TqApi 构造会等待连接建立），需在工作线程中执行。
+    失败时抛出 tqsdk 异常（如 TqAuthError 密码错误、TqConnectionError 网络不通）。
+    """
+    from tqsdk import TqApi, TqAuth
+
+    api = TqApi(auth=TqAuth(account, password))
+    api.close()
+
+
 class TqSdkTradingExecutor(TradingExecutor):
     def __init__(
         self,

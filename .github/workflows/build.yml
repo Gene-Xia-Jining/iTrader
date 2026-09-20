@@ -17,6 +17,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 差量判定需要与上一版本 tag 做 git diff，拉取完整历史与 tags
+          fetch-depth: 0
 
       - name: Read version from src/__init__.py
         id: ver
@@ -31,6 +34,32 @@ jobs:
           tag: ${{ steps.ver.outputs.tag }}
           message: "Release ${{ steps.ver.outputs.version }}"
           force_push_tag: true
+
+      # 差量更新：仅当相对上一版本 tag 只有 src/ 下文件变化时，发布全平台共用的
+      # src 补丁包（客户端打包时已把 src 外置，替换该目录即完成更新）。
+      # 判定为否时不发布补丁包，客户端自动回退下载全量包。
+      - name: Build src patch if patch-only change
+        id: patch
+        run: |
+          PREV=$(git tag --sort=-creatordate | grep -vxF "${{ steps.ver.outputs.tag }}" | head -1 || true)
+          if [ -z "$PREV" ]; then
+            echo "No previous tag; skip patch"
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$PREV" HEAD -- . ':(exclude)src/**' | grep -q .; then
+            echo "Non-src files changed since $PREV; skip patch"
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          else
+            zip -r "iTrader-${{ steps.ver.outputs.version }}-src.zip" src \
+              -x '*/__pycache__/*' '*.pyc'
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload patch artifact
+        if: steps.patch.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: itrader-src-patch
+          path: iTrader-*-src.zip
 
   build:
     needs: version
@@ -73,7 +102,7 @@ jobs:
         run: |
           cd dist
           Compress-Archive `
-            -Path iTrader.exe `
+            -Path iTrader/* `
             -DestinationPath iTrader-${{ needs.version.outputs.version }}-windows.zip `
             -Force
 
@@ -102,5 +131,6 @@ jobs:
           files: |
             artifacts/itrader-macOS/*.zip
             artifacts/itrader-Windows/*.zip
+            artifacts/itrader-src-patch/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

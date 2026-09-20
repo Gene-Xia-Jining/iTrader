@@ -1,9 +1,13 @@
 from typing import Optional, Callable
 from PySide6.QtWidgets import QMessageBox
 
-from PySide6.QtCore import Qt, QPoint, QRect, QSize
+from PySide6.QtCore import Qt, QPoint, QRect, QSize, QByteArray
+from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
+    QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -14,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QToolButton,
     QToolTip,
@@ -23,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..domain.entities import TradingConfiguration
+from ..infrastructure.proxy import SYSTEM_PROXY
 from .components import Card, PageHeader, StatusPill, StatusStatCard, ValueStatCard
 from .theme import DANGER, MONO_FONT_FAMILY, SUCCESS, WARNING
 
@@ -38,6 +44,48 @@ def make_button(text: str, variant: str = "", style: str = "", object_name: str 
     if object_name:
         button.setObjectName(object_name)
     return button
+
+
+# Material Design 的 visibility / visibility_off 图标 path（Apache 2.0，24x24 viewBox）
+_EYE_ON_PATH = (
+    "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5"
+    "c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5"
+    "-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
+)
+_EYE_OFF_PATH = (
+    "M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92"
+    "c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7"
+    "l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46"
+    "C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84"
+    "l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55"
+    "c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55"
+    "c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2z"
+    "m4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"
+)
+
+
+def _make_eye_icon(eye_off: bool, color: str = "#007aff") -> QIcon:
+    """渲染密码可见性切换的睁眼/闭眼图标（单张 32x32 位图，不依赖系统字体）。
+
+    #007aff 在明暗两主题下均可读（与页面链接色一致）。
+    故意不用 devicePixelRatio=2 的位图：cocoa 真机上 QIcon 对 dpr 位图的
+    尺寸匹配会放大裁切（offscreen 复现不出），单张 dpr=1 的 32px 位图配
+    setIconSize(16,16) 在 Retina 下恰为 1:1 物理像素，普通屏为 2:1 下采样。
+    """
+    path = _EYE_OFF_PATH if eye_off else _EYE_ON_PATH
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+        f'<path fill="{color}" d="{path}"/></svg>'
+    )
+    renderer = QSvgRenderer(QByteArray(svg.encode()))
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    icon = QIcon()
+    icon.addPixmap(pixmap)
+    return icon
 
 
 def make_divider() -> QFrame:
@@ -223,9 +271,193 @@ class LogPage(BasePage):
 class SimulationPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.header = PageHeader("模拟交易", "模拟盘交易功能建设中。")
-        self.content_layout.addWidget(self.header)
-        self.add_stretch()
+
+        card = Card()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        layout.addWidget(self._make_label(
+            "在开始实盘交易之前，您应该通过 1-3 个月的模拟交易建立信心。<br><br>"
+            "我们支持快期的模拟交易，您需要："
+        ))
+
+        layout.addWidget(self._make_label("1，下载快期模拟版客户端："))
+        layout.addWidget(self._make_link_row(
+            "手机端：", "https://www.shinnytech.com/products/app"
+        ))
+        # App Store 是手机端 iOS 渠道的子项，富文本中用 &nbsp; 缩进
+        layout.addWidget(self._make_link_row(
+            "&nbsp;&nbsp;&nbsp;&nbsp;App Store：",
+            "https://itunes.apple.com/us/app/快期小q/id1187762307?l=zh&ls=1&mt=8",
+        ))
+        layout.addWidget(self._make_link_row(
+            "Windows：", "https://www.shinnytech.com/products/q73"
+        ))
+
+        layout.addWidget(make_divider())
+
+        layout.addWidget(self._make_label("2，在快期客户端或天勤官网注册："))
+        layout.addWidget(self._make_link_row(
+            "天勤官网：", "https://account.shinnytech.com/"
+        ))
+
+        layout.addWidget(make_divider())
+
+        layout.addWidget(self._make_label(
+            "3，登录你的快期客户端，从模拟银行转入资金到期货账户。"
+        ))
+
+        layout.addWidget(make_divider())
+
+        layout.addWidget(self._make_label("4，在这里填入："))
+
+        input_row = QWidget()
+        # 透明须走全局 QSS 的 objectName 规则（theme.py）：
+        # inline stylesheet 会隔断 app QSS 对行内按钮的类型级规则，导致按钮丢背景
+        input_row.setObjectName("transparentBox")
+        input_layout = QHBoxLayout(input_row)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(8)
+
+        self.sim_account_edit = QLineEdit()
+        self.sim_account_edit.setPlaceholderText("快期模拟账户手机号")
+        input_layout.addWidget(self.sim_account_edit, 1)
+
+        self.sim_password_edit = QLineEdit()
+        self.sim_password_edit.setPlaceholderText("快期模拟账户密码")
+        self.sim_password_edit.setEchoMode(QLineEdit.Password)
+        input_layout.addWidget(self.sim_password_edit, 1)
+
+        # 行内小按钮：覆盖全局按钮 QSS 的大 padding 与胶囊圆角，与输入框等高
+        self.sim_password_toggle = make_button("", variant="secondary")
+        self.sim_password_toggle.setStyleSheet(
+            "padding: 0; min-height: 0; border-radius: 8px;"
+        )
+        # 图标按钮：宽度固定，垂直 Expanding 填满行高与输入框对齐
+        self.sim_password_toggle.setFixedWidth(40)
+        self.sim_password_toggle.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.sim_password_toggle.setCursor(Qt.PointingHandCursor)
+        # 初始为密码隐藏态：睁眼图标 = 点击可查看
+        self.sim_password_toggle.setIconSize(QSize(16, 16))
+        self.sim_password_toggle.setIcon(_make_eye_icon(eye_off=False))
+        self.sim_password_toggle.setToolTip("显示密码")
+        self.sim_password_toggle.clicked.connect(self._toggle_password_visible)
+        input_layout.addWidget(self.sim_password_toggle)
+
+        self.save_btn = make_button("保存", variant="secondary")
+        self.save_btn.setStyleSheet(
+            "padding: 9px 14px; min-height: 0; border-radius: 8px; font-size: 13px;"
+        )
+        self.save_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.save_btn.clicked.connect(self._on_save_clicked)
+        input_layout.addWidget(self.save_btn)
+
+        self.test_btn = make_button("测试连接", variant="secondary")
+        self.test_btn.setStyleSheet(
+            "padding: 9px 14px; min-height: 0; border-radius: 8px; font-size: 13px;"
+        )
+        self.test_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.test_btn.setCursor(Qt.PointingHandCursor)
+        self.test_btn.clicked.connect(self._on_test_clicked)
+        input_layout.addWidget(self.test_btn)
+
+        layout.addWidget(input_row)
+
+        hint = QLabel("提示：模拟帐户不支持组合/套利和期权交易，仅国内商品和股指国债。")
+        hint.setObjectName("dim")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        layout.addStretch(1)
+        self.content_layout.addWidget(card)
+
+        self.on_save = None  # type: Optional[Callable[[dict], None]]
+        self.on_test = None  # type: Optional[Callable[[str, str], None]]
+
+        self.content_layout.addStretch(1)
+
+    @staticmethod
+    def _make_label(text: str) -> QLabel:
+        label = QLabel(text)
+        # 全局 QWidget 背景规则会让卡内 QLabel 露出灰条，强制透明
+        label.setStyleSheet("background: transparent;")
+        return label
+
+    @staticmethod
+    def _make_link_row(prefix: str, url: str) -> QLabel:
+        # 链接色内联在富文本里：默认链接色在深色主题下几乎不可读，
+        # palette.Link 会被全局 QSS 覆盖，内联 span 是唯一可靠的方式
+        label = QLabel(
+            f'{prefix}<a href="{url}"><span style="color:#007aff">{url}</span></a>'
+        )
+        label.setObjectName("dim")
+        label.setWordWrap(True)
+        label.setOpenExternalLinks(True)
+        label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        return label
+
+    def _toggle_password_visible(self):
+        visible = self.sim_password_edit.echoMode() == QLineEdit.Normal
+        self.sim_password_edit.setEchoMode(QLineEdit.Password if visible else QLineEdit.Normal)
+        # 图标表示点击后的效果：隐藏时显示睁眼（点击查看），明文时显示闭眼（点击隐藏）
+        hidden = visible  # 点击后的状态：原为明文则变隐藏
+        self.sim_password_toggle.setIcon(_make_eye_icon(eye_off=not hidden))
+        self.sim_password_toggle.setToolTip("显示密码" if hidden else "隐藏密码")
+
+    def set_config(self, config: TradingConfiguration):
+        """用当前配置填充表单（启动时以及配置保存后调用）。
+
+        快期账户与实盘交易页共用，读写同一 tq_* 字段。
+        """
+        self.sim_account_edit.setText(config.tq_account)
+        self.sim_password_edit.setText(config.tq_password)
+
+    def _on_save_clicked(self):
+        data = {
+            "tq_account": self.sim_account_edit.text().strip(),
+            "tq_password": self.sim_password_edit.text(),
+        }
+
+        if not data["tq_account"]:
+            QMessageBox.warning(self, "输入错误", "手机号不能为空")
+            return
+        if not data["tq_password"]:
+            QMessageBox.warning(self, "输入错误", "密码不能为空")
+            return
+
+        if self.on_save:
+            self.on_save(data)
+            QMessageBox.information(self, "保存成功", "模拟交易账户配置已保存")
+        else:
+            QMessageBox.warning(self, "错误", "保存回调未设置")
+
+    def _on_test_clicked(self):
+        account = self.sim_account_edit.text().strip()
+        password = self.sim_password_edit.text()
+
+        if not account:
+            QMessageBox.warning(self, "输入错误", "手机号不能为空")
+            return
+        if not password:
+            QMessageBox.warning(self, "输入错误", "密码不能为空")
+            return
+
+        if self.on_test:
+            # 连接验证在后台进行，按钮置为不可用直至结果返回
+            self.test_btn.setEnabled(False)
+            self.test_btn.setText("测试中...")
+            self.on_test(account, password)
+        else:
+            QMessageBox.warning(self, "错误", "测试回调未设置")
+
+    def set_test_result(self, message: str, ok: bool):
+        self.test_btn.setEnabled(True)
+        self.test_btn.setText("测试连接")
+        if ok:
+            QMessageBox.information(self, "测试连接", message)
+        else:
+            QMessageBox.warning(self, "测试连接", message)
 
 
 class FlowLayout(QLayout):
@@ -406,6 +638,35 @@ class SettingsPage(BasePage):
         server_hint.setWordWrap(True)
         form.addRow("", server_hint)
 
+        # 代理服务器：直连（默认，忽略系统代理）/ 系统代理 / 自定义代理地址 + 地址输入框同行
+        self.proxy_mode_area = QWidget()
+        self.proxy_mode_area.setStyleSheet("background: transparent;")
+        proxy_mode_layout = QHBoxLayout(self.proxy_mode_area)
+        proxy_mode_layout.setContentsMargins(0, 0, 0, 0)
+        proxy_mode_layout.setSpacing(12)
+        self._proxy_mode_group = QButtonGroup(self.proxy_mode_area)
+        self._proxy_mode_group.setExclusive(True)
+        self.proxy_direct_radio = QRadioButton("直连（默认）")
+        self.proxy_system_radio = QRadioButton("系统代理")
+        self.proxy_custom_radio = QRadioButton("自定义")
+        for radio in (self.proxy_direct_radio, self.proxy_system_radio, self.proxy_custom_radio):
+            self._proxy_mode_group.addButton(radio)
+            radio.setCursor(Qt.PointingHandCursor)
+            proxy_mode_layout.addWidget(radio)
+        self.proxy_direct_radio.setChecked(True)
+        self._proxy_mode_group.buttonClicked.connect(self._on_proxy_mode_changed)
+
+        self.proxy_edit = QLineEdit()
+        self.proxy_edit.setPlaceholderText("http://127.0.0.1:7890 或 socks5://127.0.0.1:1080")
+        self.proxy_edit.setEnabled(False)
+        proxy_mode_layout.addWidget(self.proxy_edit, 1)
+        form.addRow("代理服务器:", self.proxy_mode_area)
+
+        proxy_hint = QLabel("仅影响天勤行情/交易连接，iTrader 服务器始终直连；直连会忽略系统代理。socks5 代理需安装 python-socks")
+        proxy_hint.setObjectName("dim")
+        proxy_hint.setWordWrap(True)
+        form.addRow("", proxy_hint)
+
         # 订阅品种：从服务器拉取可订阅列表，勾选后随保存写入配置
         self.symbol_refresh_btn = make_button("刷新品种", variant="secondary")
         self.symbol_status_label = QLabel("")
@@ -462,6 +723,23 @@ class SettingsPage(BasePage):
         symbols_layout.addWidget(self.symbols_hint)
         form.addRow("订阅品种:", symbols_panel)
 
+        # 软件更新：手动检查入口 + 启动自动检查开关（随保存按钮持久化）
+        form.addRow(make_divider())
+
+        self.version_label = QLabel(f"当前版本 v{__version__}")
+        self.update_check_btn = make_button("检查更新", variant="secondary")
+        self.update_status_label = QLabel("")
+        self.update_status_label.setWordWrap(True)
+        update_row = QHBoxLayout()
+        update_row.setSpacing(8)
+        update_row.addWidget(self.version_label)
+        update_row.addWidget(self.update_check_btn)
+        update_row.addWidget(self.update_status_label, 1)
+        form.addRow("软件更新:", update_row)
+
+        self.auto_check_update_checkbox = QCheckBox("启动时自动检查更新，发现新版本时提示")
+        form.addRow("", self.auto_check_update_checkbox)
+
         layout.addLayout(form)
 
         self.save_btn = make_button("保存", variant="primary")
@@ -479,6 +757,8 @@ class SettingsPage(BasePage):
         # 拉取交易所列表：接收服务器地址；提交品种：接收 (服务器地址, 品种, 交易所)
         self.on_fetch_exchanges = None  # type: Optional[Callable[[str], None]]
         self.on_submit_symbol = None  # type: Optional[Callable[[str, str, str], None]]
+        # 手动检查更新（控制器注入）
+        self.on_check_update = None  # type: Optional[Callable[[], None]]
 
         self._symbol_radios: list[QRadioButton] = []
         self._config_symbols: list[str] = []
@@ -488,14 +768,58 @@ class SettingsPage(BasePage):
         self.symbol_refresh_btn.clicked.connect(self._emit_fetch_symbols)
         self.symbol_add_btn.clicked.connect(self._on_add_symbol_clicked)
         self.symbol_add_edit.textChanged.connect(self._on_symbol_text_changed)
+        self.update_check_btn.clicked.connect(self.start_check_update)
 
         self.content_layout.addStretch(1)
 
     def set_config(self, config: TradingConfiguration):
         """用当前配置填充表单（启动时以及配置保存后调用）。"""
         self.server_url_edit.setText(config.server_url)
+        self._set_proxy_value(config.proxy_url)
         self._config_symbols = list(config.symbols)
         self._sync_symbol_radios()
+        self.auto_check_update_checkbox.setChecked(config.auto_check_update)
+
+    def _set_proxy_value(self, proxy_url: str):
+        """按存储值还原代理模式单选按钮与自定义地址输入框。"""
+        proxy_url = (proxy_url or "").strip()
+        if proxy_url == SYSTEM_PROXY:
+            self.proxy_system_radio.setChecked(True)
+            self.proxy_edit.clear()
+        elif proxy_url:
+            self.proxy_custom_radio.setChecked(True)
+            self.proxy_edit.setText(proxy_url)
+        else:
+            self.proxy_direct_radio.setChecked(True)
+            self.proxy_edit.clear()
+        self.proxy_edit.setEnabled(self.proxy_custom_radio.isChecked())
+
+    def _on_proxy_mode_changed(self, _button=None):
+        self.proxy_edit.setEnabled(self.proxy_custom_radio.isChecked())
+
+    def _current_proxy_value(self) -> str:
+        if self.proxy_system_radio.isChecked():
+            return SYSTEM_PROXY
+        if self.proxy_custom_radio.isChecked():
+            return self.proxy_edit.text().strip()
+        return ""
+
+    def start_check_update(self):
+        """检查更新按钮：置灰防重入，结果经 set_update_status 回写后恢复。"""
+        self.update_check_btn.setEnabled(False)
+        self.set_update_status("正在检查更新...", None)
+        if self.on_check_update is not None:
+            self.on_check_update()
+        else:
+            self.set_update_status("检查更新功能未启用", False)
+
+    def set_update_status(self, message: str, state=None):
+        """回写检查更新结果：state 为 True 成功 / False 失败 / None 进行中。"""
+        self.update_check_btn.setEnabled(True)
+        self.update_status_label.setText(message)
+        color = WARNING if state is None else (SUCCESS if state else DANGER)
+        # 白卡内的 QLabel 会匹配全局窗口底色规则，需显式透明
+        self.update_status_label.setStyleSheet(f"color: {color}; background: transparent;")
 
     def maybe_refresh_symbols(self):
         """切换到设置页时自动拉取品种与交易所列表；地址为空时跳过。"""
@@ -641,7 +965,11 @@ class SettingsPage(BasePage):
             radio.setChecked(radio.text() == selected)
 
     def _on_save_clicked(self):
-        data = {"server_url": self.server_url_edit.text().strip()}
+        data = {
+            "server_url": self.server_url_edit.text().strip(),
+            "proxy_url": self._current_proxy_value(),
+            "auto_check_update": self.auto_check_update_checkbox.isChecked(),
+        }
 
         # Validate
         if not data["server_url"]:
@@ -667,7 +995,7 @@ class SettingsPage(BasePage):
 class AccountPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.header = PageHeader("实盘交易", "期货公司、资金账号、交易密码与天勤配置，保存后即时生效。")
+        self.header = PageHeader("实盘交易", "期货公司、资金账号、交易密码与快期账户，保存后即时生效。")
         self.content_layout.addWidget(self.header)
 
         card = Card()
@@ -705,13 +1033,13 @@ class AccountPage(BasePage):
         form.addRow("交易密码:", self.trade_password_edit)
 
         self.tq_account_edit = QLineEdit()
-        self.tq_account_edit.setPlaceholderText("天勤账号")
-        form.addRow("天勤账号:", self.tq_account_edit)
+        self.tq_account_edit.setPlaceholderText("快期账号")
+        form.addRow("快期账号:", self.tq_account_edit)
 
         self.tq_password_edit = QLineEdit()
-        self.tq_password_edit.setPlaceholderText("天勤密码")
+        self.tq_password_edit.setPlaceholderText("快期密码")
         self.tq_password_edit.setEchoMode(QLineEdit.Password)
-        form.addRow("天勤密码:", self.tq_password_edit)
+        form.addRow("快期密码:", self.tq_password_edit)
 
         self.balance_edit = QLineEdit()
         self.balance_edit.setPlaceholderText("10000000")
@@ -817,10 +1145,10 @@ class AccountPage(BasePage):
             QMessageBox.warning(self, "输入错误", "资金账号与交易密码需同时填写")
             return
         if not data["tq_account"]:
-            QMessageBox.warning(self, "输入错误", "天勤账号不能为空")
+            QMessageBox.warning(self, "输入错误", "快期账号不能为空")
             return
         if not data["tq_password"]:
-            QMessageBox.warning(self, "输入错误", "天勤密码不能为空")
+            QMessageBox.warning(self, "输入错误", "快期密码不能为空")
             return
         if not data["initial_balance"]:
             QMessageBox.warning(self, "输入错误", "初始资金不能为空")

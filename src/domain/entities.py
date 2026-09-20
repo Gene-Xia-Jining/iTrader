@@ -40,4 +40,7 @@ class TradingConfiguration:
     initial_balance: float
     trade_account: str = ""
     trade_password: str = ""
+    proxy_url: str = ""
+    auto_check_update: bool = True
+    skipped_version: str = ""
     database_path: str = "data/client.db"

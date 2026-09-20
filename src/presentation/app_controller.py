@@ -1,11 +1,14 @@
 import asyncio
+import shutil
 import threading
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QEventLoop, QObject, QMetaObject, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEventLoop, QObject, QMetaObject, Qt, QTimer, Signal, Slot, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
+from .. import __version__
 from ..application.bootstrap import Bootstrap
 from ..application.trading_engine import TradingEngine
 from ..domain.entities import TradingConfiguration
@@ -17,6 +20,18 @@ from ..infrastructure.api.client import (
     submit_server_symbol,
 )
 from ..infrastructure.config.broker_store import BrokerStore
+from ..infrastructure.proxy import apply_proxy_environment, server_host
+from ..infrastructure.trading.tqsdk_executor import test_tq_auth_connection
+from ..infrastructure.updater import (
+    RELEASE_PAGE_URL,
+    ReleaseInfo,
+    apply_update_and_restart,
+    cleanup_stale_backups,
+    download_release,
+    extract_update,
+    fetch_latest_release,
+    is_newer,
+)
 from .main_window import ConfigDialog, MainWindow
 from .tray import TrayApp
 from .viewmodels import MainViewModel
@@ -27,10 +42,20 @@ class AppController(QObject):
     quit_requested = Signal()
     token_status_changed = Signal(str)
     server_test_finished = Signal(str, bool)
+    sim_test_finished = Signal(str, bool)
     symbols_fetched = Signal(bool, str, object)
     exchanges_fetched = Signal(bool, str, object)
     symbol_submitted = Signal(bool, str)
     auto_trade_rejected = Signal()
+    # 自动更新：信号从 asyncio 线程回 UI 线程
+    # update_check_finished 第二参为 True/False/None（成功/失败/进行中），
+    # 用 object 透传 None，避免被 bool 信号强转为 False
+    update_available = Signal(object, bool)
+    update_check_finished = Signal(str, object)
+    update_download_progress = Signal(int, int, int)
+    update_ready = Signal(str)
+    update_failed = Signal(str)
+    update_download_cancelled = Signal()
 
     def __init__(self, qt_app, workdir: Path):
         super().__init__()
@@ -45,6 +70,11 @@ class AppController(QObject):
         self._window: Optional[MainWindow] = None
         self._tray: Optional[TrayApp] = None
         self._toggle_rejected = False
+        # 自动更新状态：已发现的版本 / 下载任务 / 暂存路径 / 包类型
+        self._release: Optional[ReleaseInfo] = None
+        self._update_future = None
+        self._staged_item: Optional[Path] = None
+        self._update_kind = "full"
         self.token_status_changed.connect(self._on_token_status_changed)
 
     # -------- Lifecycle --------
@@ -52,6 +82,10 @@ class AppController(QObject):
     def start(self):
         config = self.bootstrap.config
         self._vm = MainViewModel(self.bootstrap.event_bus, config, self.qt_app)
+        # 清理上次更新遗留的 .old-* 备份（失败不影响启动）
+        cleanup_stale_backups()
+        # 在任何网络请求发生前应用代理设置（默认强制直连，屏蔽系统代理）
+        self._apply_proxy_env(config)
         self._window = MainWindow(
             vm=self._vm,
             on_toggle_auto_trade=self._handle_toggle_trading,
@@ -62,10 +96,14 @@ class AppController(QObject):
             on_quit=self._handle_quit,
             on_save_config=self._handle_save_config,
             on_save_account=self._handle_save_account,
+            on_save_simulation=self._handle_save_simulation,
+            on_test_simulation=self.handle_test_simulation,
             on_test_server=self.handle_test_server,
             on_fetch_symbols=self.handle_fetch_symbols,
             on_fetch_exchanges=self.handle_fetch_exchanges,
             on_submit_symbol=self.handle_submit_symbol,
+            on_check_update=self.handle_check_update,
+            on_cancel_update=self.handle_cancel_update,
         )
         # 期货公司分组与选中项来自 broker.json
         broker_data = self.broker_store.load()
@@ -73,12 +111,26 @@ class AppController(QObject):
             broker_data["groups"], broker_data["selected"]
         )
         self.server_test_finished.connect(self._window.settings_page.server_test.set_result)
+        self.sim_test_finished.connect(self._window.simulation_page.set_test_result)
         self.symbols_fetched.connect(self._window.settings_page.set_symbols_result)
         self.exchanges_fetched.connect(self._window.settings_page.set_exchanges_result)
         self.symbol_submitted.connect(self._window.settings_page.set_symbol_submit_result)
         self.auto_trade_rejected.connect(self._window.show_server_not_connected)
+        self.update_available.connect(self._on_update_available)
+        self.update_check_finished.connect(self._window.settings_page.set_update_status)
+        self.update_download_progress.connect(self._window.set_update_progress)
+        self.update_ready.connect(self._on_update_ready)
+        self.update_failed.connect(self._on_update_failed)
+        self.update_download_cancelled.connect(self._on_update_cancelled)
         self._setup_tray()
         self._start_async_loop_on_thread()
+        self._schedule_startup_update_check()
+
+    def _schedule_startup_update_check(self):
+        """启动后延迟静默检查更新，避免与行情/服务器连接争抢网络。"""
+        if self._vm is None or not self._vm.config.auto_check_update:
+            return
+        QTimer.singleShot(5000, lambda: self.handle_check_update(silent=True))
 
     def _start_async_loop_on_thread(self):
         loop = asyncio.new_event_loop()
@@ -188,6 +240,11 @@ class AppController(QObject):
         timeout.start()
         loop.exec()
 
+    def _apply_proxy_env(self, config: TradingConfiguration):
+        """按配置设置代理环境变量（默认不走代理）。"""
+        hosts = [server_host(config.server_url)] if config.server_url else []
+        apply_proxy_environment(config.proxy_url, hosts)
+
     def _handle_open_config(self):
         if self._vm is None:
             return
@@ -210,6 +267,9 @@ class AppController(QObject):
                 tq_password=data["tq_password"],
                 trade_account=data["trade_account"],
                 trade_password=data["trade_password"],
+                proxy_url=current_config.proxy_url,
+                auto_check_update=current_config.auto_check_update,
+                skipped_version=current_config.skipped_version,
                 initial_balance=data["initial_balance"],
                 database_path=current_config.database_path,
             )
@@ -238,6 +298,10 @@ class AppController(QObject):
             self.broker_store.save_selected(broker)
         self._apply_partial_config(data)
 
+    def _handle_save_simulation(self, data: dict):
+        """保存来自模拟交易页的快期模拟账户配置。"""
+        self._apply_partial_config(data)
+
     def _apply_partial_config(self, data: dict):
         """以当前配置为基准，用 data 中的字段覆盖后保存。"""
         if self._vm is None:
@@ -259,11 +323,15 @@ class AppController(QObject):
             tq_password=data.get("tq_password", current.tq_password),
             trade_account=data.get("trade_account", current.trade_account),
             trade_password=data.get("trade_password", current.trade_password),
+            proxy_url=data.get("proxy_url", current.proxy_url),
+            auto_check_update=data.get("auto_check_update", current.auto_check_update),
+            skipped_version=data.get("skipped_version", current.skipped_version),
             initial_balance=initial_balance,
             database_path=current.database_path,
         )
         self.bootstrap.save_config(new_config)
         self._vm.update_config(new_config)
+        self._apply_proxy_env(new_config)
         self.bootstrap.event_bus.publish(ConfigChangedEvent())
         if self._engine is not None and self._engine.is_running:
             self.bootstrap.event_bus.publish(
@@ -282,6 +350,18 @@ class AppController(QObject):
 
     def handle_test_server(self, server_url: str):
         self._run_async(self._test_server(server_url))
+
+    def handle_test_simulation(self, account: str, password: str):
+        self._run_async(self._test_simulation(account, password))
+
+    async def _test_simulation(self, account: str, password: str):
+        # TqApi 构造是阻塞网络调用，放线程池避免卡住 asyncio 事件循环
+        try:
+            await asyncio.to_thread(test_tq_auth_connection, account, password)
+        except Exception as e:
+            self.sim_test_finished.emit(f"连接失败: {e}", False)
+        else:
+            self.sim_test_finished.emit("连接成功，账户密码验证通过", True)
 
     async def _test_server(self, server_url: str):
         try:
@@ -334,6 +414,137 @@ class AppController(QObject):
         if self._window is not None:
             self._window.show_about()
 
+    # -------- 自动更新 (UI thread handlers) --------
+
+    def handle_check_update(self, silent: bool = False):
+        self._run_async(self._check_update(silent))
+
+    def handle_cancel_update(self):
+        if self._update_future is not None:
+            self._update_future.cancel()
+
+    def handle_apply_update(self):
+        """确认重启后：退出流程中替换安装物并启动新进程。"""
+        if self._staged_item is None:
+            return
+        running = self._engine is not None and self._engine.is_running
+        if running and self._window is not None and not self._window.ask_confirm_quit():
+            return
+        try:
+            apply_update_and_restart(self._staged_item, self._update_kind)
+        except Exception as e:
+            self.update_failed.emit(f"安装更新失败: {e}")
+            return
+        self._run_async(self._shutdown())
+
+    async def _check_update(self, silent: bool):
+        try:
+            release = await fetch_latest_release()
+        except Exception as e:
+            if not silent:
+                self.update_check_finished.emit(f"检查更新失败: {e}", False)
+            return
+        if release is None:
+            if not silent:
+                self.update_check_finished.emit("未找到可用的更新包", False)
+            return
+        if not is_newer(release.version, __version__):
+            if not silent:
+                self.update_check_finished.emit(f"已是最新版本（v{__version__}）", True)
+            return
+        # 静默检查尊重"跳过此版本"；手动检查不受影响
+        if silent and self._vm is not None and release.version == self._vm.config.skipped_version:
+            return
+        # 手动检查发现新版本：先回写状态恢复设置页按钮，再弹更新对话框
+        if not silent:
+            self.update_check_finished.emit(f"发现新版本 v{release.version}", None)
+        self._release = release
+        self.update_available.emit(release, silent)
+
+    def handle_download_update(self):
+        release = self._release
+        if release is None or self._window is None:
+            return
+        # 有补丁包时差量更新，否则回退全量
+        use_patch = release.has_patch
+        self._update_kind = "patch" if use_patch else "full"
+        url = release.patch_url if use_patch else release.full_url
+        self._window.begin_update_progress()
+        self._update_future = self._run_async(self._download_update(url))
+
+    async def _download_update(self, url: str):
+        stage_dir = self._stage_dir()
+        last_pct = -1
+
+        def progress(received: int, total: int):
+            nonlocal last_pct
+            if total <= 0:
+                # 服务器未返回总大小时仅更新已下载量文本
+                self.update_download_progress.emit(-1, received, total)
+                return
+            pct = min(100, int(received * 100 / total))
+            if pct != last_pct:
+                last_pct = pct
+                self.update_download_progress.emit(pct, received, total)
+
+        try:
+            zip_path = await download_release(url, stage_dir, progress_cb=progress)
+            self._staged_item = await asyncio.to_thread(
+                extract_update, zip_path, stage_dir
+            )
+        except asyncio.CancelledError:
+            self.update_download_cancelled.emit()
+            return
+        except Exception as e:
+            self.update_failed.emit(f"下载更新失败: {e}")
+            return
+        self.update_ready.emit("差量更新包" if self._update_kind == "patch" else "完整更新包")
+
+    def _on_update_available(self, release: ReleaseInfo, silent: bool):
+        if self._window is None:
+            return
+        choice = self._window.show_update_available(release)
+        if choice == "update":
+            self.handle_download_update()
+        elif choice == "skip":
+            self._skip_version(release.version)
+        elif choice == "page":
+            QDesktopServices.openUrl(QUrl(RELEASE_PAGE_URL))
+
+    def _on_update_ready(self, kind_label: str):
+        if self._window is None:
+            return
+        self._window.finish_update_progress()
+        if self._window.show_update_ready(kind_label):
+            self.handle_apply_update()
+
+    def _on_update_failed(self, message: str):
+        self._update_future = None
+        self._clear_stage_dir()
+        if self._window is not None:
+            self._window.finish_update_progress()
+            self._window.show_update_error(message)
+
+    def _on_update_cancelled(self):
+        self._update_future = None
+        self._clear_stage_dir()
+        if self._window is not None:
+            self._window.finish_update_progress()
+            self._window.settings_page.set_update_status("已取消下载", False)
+
+    def _skip_version(self, version: str):
+        if self._vm is None:
+            return
+        self._apply_partial_config({"skipped_version": version})
+
+    def _stage_dir(self) -> Path:
+        return self.workdir / "data" / "update"
+
+    def _clear_stage_dir(self):
+        # 暂存目录只存可重新下载的更新包，清理失败仅占磁盘，不影响功能
+        shutil.rmtree(self._stage_dir(), ignore_errors=True)
+        self._staged_item = None
+
     def _handle_quit(self):
         running = self._engine is not None and self._engine.is_running
         if running and self._window is not None:
@@ -361,7 +572,7 @@ class AppController(QObject):
                 if request.get("status") == "approved":
                     token = await self.bootstrap.token_service.load_approved_token(data)
                     if token:
-                        status = f"已通过，已保存到 {self.bootstrap.token_store.token_dir}"
+                        status = "已通过，token 已加密保存"
                     else:
                         status = "已通过，但服务器未返回 token"
                     break

@@ -5,10 +5,10 @@ from typing import Optional
 from ..domain.entities import TradingConfiguration
 from ..domain.events import EventBus
 from ..infrastructure.api.client import (
-    FileTokenStore,
     ServerStreamClient,
     TokenApiService,
 )
+from ..infrastructure.api.db_token_store import DbTokenStore
 from ..infrastructure.config.config_service import ConfigService
 from ..infrastructure.db.repositories import SQLiteTradeCommandRepository
 from ..infrastructure.trading.tqsdk_executor import TqSdkTradingExecutor
@@ -35,7 +35,7 @@ class Bootstrap:
         self._trade_repo: Optional[SQLiteTradeCommandRepository] = None
         self._trading_executor: Optional[TqSdkTradingExecutor] = None
         self._stream_client: Optional[ServerStreamClient] = None
-        self._token_store: Optional[FileTokenStore] = None
+        self._token_store: Optional[DbTokenStore] = None
         self._token_service: Optional[TokenApiService] = None
         self._engine: Optional[TradingEngine] = None
 
@@ -50,9 +50,9 @@ class Bootstrap:
         self.config_service.save(config)
 
     @property
-    def token_store(self) -> FileTokenStore:
+    def token_store(self) -> DbTokenStore:
         if self._token_store is None:
-            self._token_store = FileTokenStore()
+            self._token_store = DbTokenStore(self.db_path)
         return self._token_store
 
     @property

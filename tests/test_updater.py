@@ -1,0 +1,331 @@
+import asyncio
+import contextlib
+import os
+import stat
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+from unittest import mock
+
+import httpx
+
+from src.infrastructure import updater
+from src.infrastructure.updater import (
+    RELEASES_API_URL,
+    ReleaseInfo,
+    apply_update_and_restart,
+    cleanup_stale_backups,
+    extract_update,
+    fetch_latest_release,
+    is_newer,
+    parse_version,
+)
+
+
+def _make_zip(path: Path, entries: dict) -> None:
+    """entries: {zip内路径: 内容字节}；内容为 callable 时按符号链接条目处理。"""
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, data in entries.items():
+            if callable(data):
+                info = zipfile.ZipInfo(name)
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                zf.writestr(info, data())
+            else:
+                zf.writestr(name, data)
+
+
+class VersionCompareTest(unittest.TestCase):
+    def test_parse_version(self):
+        self.assertEqual(parse_version("0.0.2"), (0, 0, 2))
+        self.assertEqual(parse_version("v0.1"), (0, 1))
+        self.assertEqual(parse_version(" 1.2.3 "), (1, 2, 3))
+        self.assertIsNone(parse_version("abc"))
+        self.assertIsNone(parse_version(""))
+
+    def test_is_newer(self):
+        self.assertTrue(is_newer("0.0.3", "0.0.2"))
+        self.assertFalse(is_newer("0.0.2", "0.0.2"))
+        self.assertFalse(is_newer("0.0.1", "0.0.2"))
+        # 位数不同的按整数比较（不是字符串比较）
+        self.assertTrue(is_newer("0.0.10", "0.0.2"))
+        self.assertFalse(is_newer("0.0.2", "0.0.10"))
+        self.assertTrue(is_newer("0.1", "0.0.2"))
+        self.assertTrue(is_newer("1.0.0", "1.0"))
+        self.assertTrue(is_newer("v0.0.3", "0.0.2"))
+        # 任一版本非法时保守视为不更新
+        self.assertFalse(is_newer("bad", "0.0.2"))
+        self.assertFalse(is_newer("0.0.3", ""))
+
+
+class SelectAssetsTest(unittest.TestCase):
+    ASSETS = [
+        {"name": "iTrader-0.0.3-macos.zip", "browser_download_url": "https://x/macos.zip"},
+        {"name": "iTrader-0.0.3-windows.zip", "browser_download_url": "https://x/win.zip"},
+        {"name": "iTrader-0.0.3-src.zip", "browser_download_url": "https://x/src.zip"},
+    ]
+
+    def test_darwin_selects_macos_full_and_patch(self):
+        with mock.patch.object(sys, "platform", "darwin"):
+            full, patch = updater._select_assets(self.ASSETS)
+        self.assertEqual(full, "https://x/macos.zip")
+        self.assertEqual(patch, "https://x/src.zip")
+
+    def test_windows_selects_windows_full_and_patch(self):
+        with mock.patch.object(sys, "platform", "win32"):
+            full, patch = updater._select_assets(self.ASSETS)
+        self.assertEqual(full, "https://x/win.zip")
+        self.assertEqual(patch, "https://x/src.zip")
+
+    def test_unknown_platform_has_no_full(self):
+        with mock.patch.object(sys, "platform", "linux"):
+            full, patch = updater._select_assets(self.ASSETS)
+        self.assertEqual(full, "")
+        self.assertEqual(patch, "https://x/src.zip")
+
+
+class FetchLatestReleaseTest(unittest.TestCase):
+    @staticmethod
+    def _payload(assets=None, tag="0.0.3"):
+        return {
+            "tag_name": tag,
+            "body": "release notes",
+            "assets": assets
+            if assets is not None
+            else [
+                {"name": "iTrader-0.0.3-macos.zip", "browser_download_url": "https://x/macos.zip"},
+                {"name": "iTrader-0.0.3-windows.zip", "browser_download_url": "https://x/win.zip"},
+                {"name": "iTrader-0.0.3-src.zip", "browser_download_url": "https://x/src.zip"},
+            ],
+        }
+
+    def _fetch(self, payload, status=200):
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert str(request.url) == RELEASES_API_URL
+            return httpx.Response(status, json=payload)
+
+        return asyncio.run(fetch_latest_release(transport=httpx.MockTransport(handler)))
+
+    def test_parses_release_with_patch(self):
+        with mock.patch.object(sys, "platform", "darwin"):
+            release = self._fetch(self._payload())
+        self.assertIsInstance(release, ReleaseInfo)
+        self.assertEqual(release.version, "0.0.3")
+        self.assertEqual(release.notes, "release notes")
+        self.assertEqual(release.full_url, "https://x/macos.zip")
+        self.assertTrue(release.has_patch)
+        self.assertEqual(release.patch_url, "https://x/src.zip")
+
+    def test_returns_none_without_platform_asset(self):
+        with mock.patch.object(sys, "platform", "linux"):
+            release = self._fetch(self._payload())
+        self.assertIsNone(release)
+
+    def test_returns_none_without_tag(self):
+        with mock.patch.object(sys, "platform", "darwin"):
+            release = self._fetch(self._payload(assets=[], tag=""))
+        self.assertIsNone(release)
+
+    def test_http_error_propagates(self):
+        with mock.patch.object(sys, "platform", "darwin"):
+            with self.assertRaises(httpx.HTTPStatusError):
+                self._fetch({}, status=404)
+
+
+class ExtractUpdateTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.stage = self.dir / "update"
+        self.zip_path = self.dir / "update.zip"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_mac_full_zip(self):
+        _make_zip(self.zip_path, {
+            "iTrader.app/Contents/Info.plist": b"plist",
+            "iTrader.app/Contents/MacOS/iTrader": b"MZ",
+        })
+        item = extract_update(self.zip_path, self.stage)
+        self.assertEqual(item, self.stage / "stage" / "iTrader.app")
+        self.assertTrue((item / "Contents" / "MacOS" / "iTrader").is_file())
+
+    def test_windows_full_zip(self):
+        _make_zip(self.zip_path, {
+            "iTrader.exe": b"MZ",
+            "_internal/src/__init__.py": b"x",
+        })
+        item = extract_update(self.zip_path, self.stage)
+        self.assertEqual(item, self.stage / "stage")
+        self.assertTrue((item / "_internal" / "src" / "__init__.py").is_file())
+
+    def test_patch_zip(self):
+        _make_zip(self.zip_path, {
+            "src/__init__.py": b"v2",
+            "src/infrastructure/updater.py": b"x",
+        })
+        item = extract_update(self.zip_path, self.stage)
+        self.assertEqual(item, self.stage / "stage" / "src")
+        self.assertTrue((item / "__init__.py").is_file())
+
+    def test_invalid_zip_raises(self):
+        _make_zip(self.zip_path, {"random.txt": b"x"})
+        with self.assertRaises(ValueError):
+            extract_update(self.zip_path, self.stage)
+
+    def test_symlink_entry_restored(self):
+        _make_zip(self.zip_path, {
+            "iTrader.app/Contents/Info.plist": b"plist",
+            "iTrader.app/Contents/Resources/target.txt": b"data",
+            "iTrader.app/Contents/Resources/link": lambda: "target.txt",
+        })
+        item = extract_update(self.zip_path, self.stage)
+        link = item / "Contents" / "Resources" / "link"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(os.readlink(link), "target.txt")
+
+
+class ApplyUpdateTest(unittest.TestCase):
+    """frozen 态替换逻辑：mock sys/Popen，在 tmp 目录内真实执行文件操作。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _frozen(self, platform: str, executable: Path, meipass: Path | None = None):
+        """进入 frozen 环境模拟，返回 Popen mock。"""
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(updater, "is_frozen", return_value=True))
+        stack.enter_context(mock.patch.object(sys, "platform", platform))
+        if meipass is not None:
+            stack.enter_context(
+                mock.patch.object(sys, "_MEIPASS", str(meipass), create=True)
+            )
+        stack.enter_context(mock.patch.object(sys, "executable", str(executable)))
+        return stack.enter_context(mock.patch.object(updater.subprocess, "Popen"))
+
+    def test_non_frozen_rejected(self):
+        item = self.dir / "stage" / "src"
+        item.mkdir(parents=True)
+        with self.assertRaises(RuntimeError):
+            apply_update_and_restart(item, "patch")
+
+    def test_full_update_darwin(self):
+        app = self.dir / "Applications" / "iTrader.app"
+        exe = app / "Contents" / "MacOS" / "iTrader"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("old")
+        new_app = self.dir / "stage" / "iTrader.app"
+        (new_app / "Contents" / "MacOS").mkdir(parents=True)
+        (new_app / "Contents" / "MacOS" / "iTrader").write_text("new")
+
+        popen = self._frozen("darwin", exe)
+        binary = apply_update_and_restart(new_app, "full")
+
+        # macOS 的 /var 是 /private/var 符号链接，路径统一用 resolve 后比较
+        self.assertEqual(binary.resolve(), (app / "Contents" / "MacOS" / "iTrader").resolve())
+        self.assertEqual((app / "Contents" / "MacOS" / "iTrader").read_text(), "new")
+        # 旧 .app 改名让位保留，供新进程启动时清理
+        backups = list(self.dir.glob("Applications/iTrader.app.old-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual((backups[0] / "Contents" / "MacOS" / "iTrader").read_text(), "old")
+        popen.assert_called_once()
+
+    def test_full_update_windows(self):
+        progdir = self.dir / "iTrader"
+        exe = progdir / "iTrader.exe"
+        progdir.mkdir()
+        exe.write_bytes(b"old")
+        (progdir / "_internal").mkdir()
+        new_dir = self.dir / "stage"
+        new_dir.mkdir()
+        (new_dir / "iTrader.exe").write_bytes(b"new")
+        (new_dir / "_internal").mkdir()
+
+        popen = self._frozen("win32", exe)
+        binary = apply_update_and_restart(new_dir, "full")
+
+        self.assertEqual(binary.resolve(), exe.resolve())
+        self.assertEqual(exe.read_bytes(), b"new")
+        backups = list(self.dir.glob("iTrader.old-*"))
+        self.assertEqual(len(backups), 1)
+        popen.assert_called_once()
+
+    def test_patch_update_replaces_src_only(self):
+        meipass = self.dir / "meipass"
+        src = meipass / "src"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("old")
+        exe = self.dir / "app" / "iTrader"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("binary")
+        new_src = self.dir / "stage" / "src"
+        new_src.mkdir(parents=True)
+        (new_src / "__init__.py").write_text("new")
+
+        popen = self._frozen("darwin", exe, meipass=meipass)
+        binary = apply_update_and_restart(new_src, "patch")
+
+        self.assertEqual(binary, exe)
+        self.assertEqual((src / "__init__.py").read_text(), "new")
+        backups = list(meipass.glob("src.old-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual((backups[0] / "__init__.py").read_text(), "old")
+        popen.assert_called_once_with([str(exe)], cwd=str(exe.parent), close_fds=True)
+
+    def test_swap_failure_rolls_back(self):
+        app = self.dir / "iTrader.app"
+        exe = app / "Contents" / "MacOS" / "iTrader"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("old")
+        # 新包缺 Contents/MacOS/iTrader 导致 _launch_binary_of 抛错，应回滚
+        new_app = self.dir / "stage" / "iTrader.app"
+        new_app.mkdir(parents=True)
+
+        popen = self._frozen("darwin", exe)
+        with self.assertRaises(RuntimeError):
+            apply_update_and_restart(new_app, "full")
+
+        self.assertEqual(exe.read_text(), "old")
+        self.assertFalse(list(self.dir.glob("Applications/*.old-*")))
+        popen.assert_not_called()
+
+
+class CleanupStaleBackupsTest(unittest.TestCase):
+    def test_removes_old_backups_darwin(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "Applications"
+        app = root / "iTrader.app"
+        (app / "Contents").mkdir(parents=True)
+        stale = root / "iTrader.app.old-123"
+        stale.mkdir()
+        (stale / "junk").write_text("x")
+
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(sys, "platform", "darwin"))
+        stack.enter_context(
+            mock.patch.object(sys, "executable", str(app / "Contents" / "MacOS" / "iTrader"))
+        )
+        stack.enter_context(mock.patch.object(updater, "is_frozen", return_value=True))
+        updater.cleanup_stale_backups()
+
+        self.assertFalse(stale.exists())
+        self.assertTrue(app.exists())
+
+
+class ReleaseInfoTest(unittest.TestCase):
+    def test_has_patch(self):
+        self.assertTrue(ReleaseInfo("0.0.3", "", "full", "patch").has_patch)
+        self.assertFalse(ReleaseInfo("0.0.3", "", "full").has_patch)
+
+
+if __name__ == "__main__":
+    unittest.main()
