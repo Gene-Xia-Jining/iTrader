@@ -85,7 +85,8 @@ class CheckServerHealthTest(unittest.IsolatedAsyncioTestCase):
 class WindowBindingsTest(unittest.TestCase):
     def _make_config(self):
         return TradingConfiguration(
-            "http://localhost:8000", ["SHFE.au2510"], True, "acc", "pwd", 1000000
+            server_url="http://localhost:8000",
+            auto_trade=True,
         )
 
     def test_main_window_binds_settings_test_row(self):
@@ -121,11 +122,6 @@ class WindowBindingsTest(unittest.TestCase):
         )
         page = window.settings_page
         self.assertEqual(page.server_url_edit.text(), "http://localhost:8000")
-        account = window.account_page
-        self.assertEqual(account.tq_account_edit.text(), "acc")
-        self.assertEqual(account.tq_password_edit.text(), "pwd")
-        self.assertEqual(account.balance_edit.text(), "1000000")
-        self.assertEqual(account.symbols_edit.text(), "SHFE.au2510")
 
     def test_config_dialog_test_row(self):
         _make_app()

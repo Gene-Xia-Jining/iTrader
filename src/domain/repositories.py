@@ -5,17 +5,18 @@ from .entities import TradeCommand, TradeCommandStatus
 
 class TradeCommandRepository(ABC):
     @abstractmethod
-    async def exists(self, command_id: str) -> bool: ...
+    async def exists(self, account_id: str, command_id: str) -> bool: ...
 
     @abstractmethod
     async def add(self, command: TradeCommand) -> None: ...
 
     @abstractmethod
-    async def get(self, command_id: str) -> Optional[TradeCommand]: ...
+    async def get(self, account_id: str, command_id: str) -> Optional[TradeCommand]: ...
 
     @abstractmethod
     async def set_status(
         self,
+        account_id: str,
         command_id: str,
         status: TradeCommandStatus,
         error: Optional[str] = None,

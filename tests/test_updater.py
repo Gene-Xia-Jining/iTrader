@@ -175,6 +175,15 @@ class ExtractUpdateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_update(self.zip_path, self.stage)
 
+    def test_zip_slip_rejected(self):
+        _make_zip(self.zip_path, {
+            "iTrader.app/Contents/Info.plist": b"plist",
+            "../evil.txt": b"evil",
+        })
+        with self.assertRaises(ValueError) as cm:
+            extract_update(self.zip_path, self.stage)
+        self.assertIn("非法路径", str(cm.exception))
+
     def test_symlink_entry_restored(self):
         _make_zip(self.zip_path, {
             "iTrader.app/Contents/Info.plist": b"plist",
@@ -319,6 +328,30 @@ class CleanupStaleBackupsTest(unittest.TestCase):
 
         self.assertFalse(stale.exists())
         self.assertTrue(app.exists())
+
+    def test_removes_old_backups_windows(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "Programs"
+        progdir = root / "iTrader"
+        progdir.mkdir(parents=True)
+        exe = progdir / "iTrader.exe"
+        exe.write_bytes(b"MZ")
+        stale = root / "iTrader.old-456"
+        stale.mkdir()
+        (stale / "junk").write_text("x")
+
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(sys, "platform", "win32"))
+        stack.enter_context(
+            mock.patch.object(sys, "executable", str(exe))
+        )
+        stack.enter_context(mock.patch.object(updater, "is_frozen", return_value=True))
+        updater.cleanup_stale_backups()
+
+        self.assertFalse(stale.exists())
+        self.assertTrue(progdir.exists())
 
 
 class ReleaseInfoTest(unittest.TestCase):

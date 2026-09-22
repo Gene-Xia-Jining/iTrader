@@ -33,7 +33,8 @@ class MainViewModel(QObject):
         self._event_bus = event_bus
         self._config = config
         self._server_connected = False
-        self._trading_active = False
+        # 每个账户独立跟踪运行状态（多引擎可同时运行）
+        self._trading_active_by_account: dict[str, bool] = {}
         self._dark = False
         self._log_colors = log_colors(False)
         self._subscribe_events()
@@ -41,8 +42,12 @@ class MainViewModel(QObject):
     def _subscribe_events(self):
         self._event_bus.subscribe(LogEvent, self._on_log)
         self._event_bus.subscribe(StatusChangedEvent, self._on_status)
-        self._event_bus.subscribe(TradingStartedEvent, lambda _e: self._on_trading_started())
-        self._event_bus.subscribe(TradingStoppedEvent, lambda _e: self._on_trading_stopped())
+        self._event_bus.subscribe(
+            TradingStartedEvent, lambda e: self._on_trading_started(e.account_id)
+        )
+        self._event_bus.subscribe(
+            TradingStoppedEvent, lambda e: self._on_trading_stopped(e.account_id)
+        )
         self._event_bus.subscribe(ConfigChangedEvent, lambda _e: self.configChanged.emit())
 
     # ----- Properties -----
@@ -57,11 +62,17 @@ class MainViewModel(QObject):
 
     @Property(str, notify=tradingStatusChanged)
     def tradingStatus(self) -> str:
-        return "运行中" if self._trading_active else "已停止"
+        active_accounts = [aid for aid, active in self._trading_active_by_account.items() if active]
+        if active_accounts:
+            return f"运行中 ({len(active_accounts)})"
+        return "已停止"
 
     @Property(str, notify=tradingStatusColorChanged)
     def tradingStatusColor(self) -> str:
-        return "#2ecc71" if self._trading_active else "#e74c3c"
+        return "#2ecc71" if self._vm_trading_active() else "#e74c3c"
+
+    def _vm_trading_active(self) -> bool:
+        return any(self._trading_active_by_account.values())
 
     @Property(bool, notify=autoTradeChanged)
     def autoTrade(self) -> bool:
@@ -74,7 +85,7 @@ class MainViewModel(QObject):
 
     @Property(bool, notify=tradingStatusChanged)
     def tradingActive(self) -> bool:
-        return self._trading_active
+        return self._vm_trading_active()
 
     @property
     def config(self) -> TradingConfiguration:
@@ -105,24 +116,29 @@ class MainViewModel(QObject):
             self._server_connected = event.server_connected
             self.serverStatusChanged.emit(self.serverStatus)
             self.serverStatusColorChanged.emit(self.serverStatusColor)
-        if self._trading_active != event.trading_active:
-            self._trading_active = event.trading_active
-            self.tradingStatusChanged.emit(self.tradingStatus)
-            self.tradingStatusColorChanged.emit(self.tradingStatusColor)
+        if event.account_id:
+            if self._trading_active_by_account.get(event.account_id) != event.trading_active:
+                self._trading_active_by_account[event.account_id] = event.trading_active
+                self._emit_trading_status()
 
-    def _on_trading_started(self):
-        if not self._trading_active:
-            self._trading_active = True
-            self.tradingStatusChanged.emit(self.tradingStatus)
-            self.tradingStatusColorChanged.emit(self.tradingStatusColor)
+    def _emit_trading_status(self):
+        self.tradingStatusChanged.emit(self.tradingStatus)
+        self.tradingStatusColorChanged.emit(self.tradingStatusColor)
 
-    def _on_trading_stopped(self):
-        if self._trading_active:
-            self._trading_active = False
-            self.tradingStatusChanged.emit(self.tradingStatus)
-            self.tradingStatusColorChanged.emit(self.tradingStatusColor)
+    def _on_trading_started(self, account_id: str):
+        self._trading_active_by_account[account_id or "legacy"] = True
+        self._emit_trading_status()
+
+    def _on_trading_stopped(self, account_id: str):
+        self._trading_active_by_account[account_id or "legacy"] = False
+        self._emit_trading_status()
 
 class ConfigDialogViewModel(QObject):
+    """旧式配置对话框的校验：只处理全局配置（服务器地址）。
+
+    账户凭据与品种已迁到账户表，由交易账号页/模拟交易页维护。
+    """
+
     validated = Signal(dict)
     cancelled = Signal()
 
@@ -134,50 +150,14 @@ class ConfigDialogViewModel(QObject):
     def server_url(self) -> str:
         return self._config.server_url
 
-    @property
-    def tq_account(self) -> str:
-        return self._config.tq_account
-
-    @property
-    def tq_password(self) -> str:
-        return self._config.tq_password
-
-    @property
-    def initial_balance(self) -> float:
-        return self._config.initial_balance
-
-    @property
-    def symbols(self) -> list[str]:
-        return list(self._config.symbols)
-
-    def symbols_text(self) -> str:
-        return ",".join(self._config.symbols)
-
     def submit(
         self,
         server_url: str,
-        tq_account: str,
-        tq_password: str,
-        initial_balance_str: str,
-        symbols_str: str,
     ) -> tuple[bool, str]:
-        try:
-            initial_balance = float(initial_balance_str)
-        except ValueError:
-            return False, "初始资金必须是数字"
-        symbols = [s.strip() for s in symbols_str.split(",") if s.strip()]
-        if not symbols:
-            return False, "至少需要一个交易品种"
         if not server_url.strip():
             return False, "服务器地址不能为空"
         result = {
             "server_url": server_url.strip(),
-            "tq_account": tq_account,
-            "tq_password": tq_password,
-            "trade_account": self._config.trade_account,
-            "trade_password": self._config.trade_password,
-            "initial_balance": initial_balance,
-            "symbols": symbols,
         }
         self.validated.emit(result)
         return True, ""

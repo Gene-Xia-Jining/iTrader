@@ -28,6 +28,7 @@ from ..domain.services import TradingExecutor
 @dataclass
 class TradingEngineDeps:
     config: TradingConfiguration
+    account_id: str
     trade_repo: TradeCommandRepository
     stream_client: StrategyStreamClient
     trading_executor: TradingExecutor
@@ -38,6 +39,7 @@ class TradingEngineDeps:
 class TradingEngine:
     def __init__(self, deps: TradingEngineDeps):
         self.config = deps.config
+        self.account_id = deps.account_id
         self.trade_repo = deps.trade_repo
         self.stream_client = deps.stream_client
         self.trading_executor = deps.trading_executor
@@ -62,6 +64,7 @@ class TradingEngine:
             StatusChangedEvent(
                 trading_active=self._running,
                 server_connected=self._server_connected,
+                account_id=self.account_id,
             )
         )
 
@@ -69,7 +72,7 @@ class TradingEngine:
         if self._running:
             return
         self._running = True
-        self.event_bus.publish(TradingStartedEvent())
+        self.event_bus.publish(TradingStartedEvent(account_id=self.account_id))
         self._log("自动交易已启动", LogLevel.INFO)
         self._publish_status()
         try:
@@ -79,15 +82,11 @@ class TradingEngine:
 
     async def stop(self) -> None:
         self._running = False
-        try:
-            await self.trading_executor.close()
-        except Exception:
-            pass
 
     async def _shutdown(self) -> None:
         self._running = False
         self._server_connected = False
-        self.event_bus.publish(TradingStoppedEvent())
+        self.event_bus.publish(TradingStoppedEvent(account_id=self.account_id))
         self._log("自动交易已停止", LogLevel.INFO)
         self._publish_status()
 
@@ -115,11 +114,12 @@ class TradingEngine:
             LogLevel.INFO,
         )
 
-        if await self.trade_repo.exists(signal.id):
+        if await self.trade_repo.exists(self.account_id, signal.id):
             self._log(f"已执行过: {signal.id}", LogLevel.WARNING)
             return
 
         command = TradeCommand(
+            account_id=self.account_id,
             id=signal.id,
             symbol=signal.symbol,
             side=signal.side,
@@ -135,11 +135,15 @@ class TradingEngine:
             return
 
         try:
-            await self.trade_repo.set_status(signal.id, TradeCommandStatus.EXECUTING)
-            await self.trading_executor.set_target_position(
-                signal.symbol, signal.position
+            await self.trade_repo.set_status(
+                self.account_id, signal.id, TradeCommandStatus.EXECUTING
             )
-            await self.trade_repo.set_status(signal.id, TradeCommandStatus.EXECUTED)
+            await self.trading_executor.set_target_position(
+                signal.symbol, signal.position, self.account_id
+            )
+            await self.trade_repo.set_status(
+                self.account_id, signal.id, TradeCommandStatus.EXECUTED
+            )
             self.event_bus.publish(
                 TradeExecutedEvent(
                     symbol=signal.symbol, target_position=signal.position
@@ -151,7 +155,7 @@ class TradingEngine:
             )
         except Exception as e:
             await self.trade_repo.set_status(
-                signal.id, TradeCommandStatus.FAILED, error=str(e)
+                self.account_id, signal.id, TradeCommandStatus.FAILED, error=str(e)
             )
             self.event_bus.publish(TradeFailedEvent(symbol=signal.symbol, error=str(e)))
             self._log(f"交易执行失败: {e}", LogLevel.ERROR)

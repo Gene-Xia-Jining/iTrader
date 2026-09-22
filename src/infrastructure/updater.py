@@ -161,11 +161,17 @@ def extract_update(zip_path: Path, stage_dir: Path) -> Path:
     shutil.rmtree(extract_root, ignore_errors=True)
     extract_root.mkdir(parents=True, exist_ok=True)
 
+    extract_root_res = extract_root.resolve()
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
         if not (_is_mac_full_zip(names) or _is_patch_zip(names)):
             if "iTrader.exe" not in names and "iTrader.exe/" not in names:
                 raise ValueError("压缩包内容不是有效的 iTrader 更新包")
+        # 安全解压：校验每个条目路径，防止 Zip Slip 路径穿越
+        for member in zf.infolist():
+            target_path = (extract_root / member.filename).resolve()
+            if not (target_path == extract_root_res or extract_root_res in target_path.parents):
+                raise ValueError(f"压缩包包含非法路径条目: {member.filename}")
         zf.extractall(extract_root)
         # CI 用 zip -ry 打包，可能含符号链接；zipfile 会把链接写成普通文件，需还原
         for info in zf.infolist():
@@ -173,8 +179,12 @@ def extract_update(zip_path: Path, stage_dir: Path) -> Path:
                 link = extract_root / info.filename
                 if link.is_file():
                     link_path = zf.read(info).decode("utf-8", "replace")
-                    link.unlink()
-                    os.symlink(link_path, link)
+                    try:
+                        link.unlink()
+                        os.symlink(link_path, link)
+                    except OSError:
+                        # Windows 上非管理员权限无 symlink 特权，降级忽略
+                        pass
 
     if _is_mac_full_zip(names):
         item = extract_root / "iTrader.app"
@@ -227,7 +237,10 @@ def _swap_directory(new_item: Path, target: Path) -> None:
     try:
         shutil.move(str(new_item), str(target))
     except Exception:
-        backup.rename(target)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        if backup.exists():
+            backup.rename(target)
         raise
 
 
@@ -284,7 +297,7 @@ def cleanup_stale_backups() -> None:
             candidates += list(app_root.parent.glob(f"{app_root.name}.old-*"))
     else:
         exe = Path(sys.executable)
-        candidates += list(exe.parent.glob(f"{exe.parent.name}.old-*"))
+        candidates += list(exe.parent.parent.glob(f"{exe.parent.name}.old-*"))
     src_root = src_install_dir()
     if src_root is not None:
         candidates += list(src_root.parent.glob(f"{src_root.name}.old-*"))

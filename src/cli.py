@@ -27,9 +27,6 @@ async def run_headless():
 
     await _ensure_token(bs, input)
 
-    engine = await bs.build_engine()
-    engine.set_auto_trade(bs.config.auto_trade)
-
     def _print_log(evt: LogEvent):
         level_prefix = {
             LogLevel.INFO: "[INFO]",
@@ -42,7 +39,18 @@ async def run_headless():
 
     bs.event_bus.subscribe(LogEvent, _print_log)
 
-    await engine.start()
+    enabled = [a for a in bs.accounts if a.enabled]
+    if not enabled:
+        print("没有已启用的交易账户，请先在应用中配置账户。")
+        return
+    tasks = [
+        asyncio.create_task((await bs.build_engine(account.id)).start())
+        for account in enabled
+    ]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        await bs.shutdown()
 
 def main():
     try:

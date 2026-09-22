@@ -8,6 +8,7 @@ from cryptography.fernet import Fernet
 from src.infrastructure.api.db_token_store import DbTokenStore
 from src.infrastructure.config.config_service import ConfigService
 from src.infrastructure.security.crypto import PasswordCipher
+from tests.test_crypto import _make_account
 
 
 class DbTokenStoreTest(unittest.TestCase):
@@ -77,11 +78,9 @@ class DbTokenStoreTest(unittest.TestCase):
     def test_shares_key_with_config_service(self):
         # 同目录的 ConfigService 与 DbTokenStore 共享 .secret.key，互不影响
         config_service = ConfigService(str(self.db_path))
-        config = config_service.load()
-        config.trade_password = "trade-pwd"
-        config_service.save(config)
+        config_service.save_account(_make_account())
         self.store.save_token("token-abc")
-        self.assertEqual(config_service.load().trade_password, "trade-pwd")
+        self.assertEqual(config_service.get_account("acc-1").tq_password, "tq-pwd")
         self.assertEqual(self.store.load_token(), "token-abc")
         self.assertTrue((self.dir / ".secret.key").exists())
 

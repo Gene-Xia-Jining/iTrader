@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication, QLineEdit
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
 
-from src.domain.entities import TradingConfiguration
+from src.domain.entities import Account, TradingConfiguration
 from src.infrastructure.config.config_service import ConfigService
 from src.presentation.pages import SimulationPage
 
@@ -16,14 +16,24 @@ def _make_app():
     return app
 
 
+def _make_account(**overrides):
+    fields = dict(
+        id="legacy",
+        kind="sim",
+        label="模拟账户",
+        tq_account="13800000000",
+        tq_password="pwd",
+        symbols=["SHFE.au2510"],
+        enabled=True,
+    )
+    fields.update(overrides)
+    return Account(**fields)
+
+
 def _make_config(**overrides):
     fields = dict(
         server_url="http://127.0.0.1:3080",
-        symbols=["SHFE.au2510"],
         auto_trade=False,
-        tq_account="",
-        tq_password="",
-        initial_balance=1_000_000,
         database_path="data/client.db",
     )
     fields.update(overrides)
@@ -35,9 +45,9 @@ class SimulationPageTest(unittest.TestCase):
         _make_app()
         self.page = SimulationPage()
 
-    def test_set_config_fills_form(self):
-        # 模拟页读写合并后的快期账户字段（tq_*）
-        self.page.set_config(_make_config(tq_account="13800000000", tq_password="pwd"))
+    def test_set_account_fills_form(self):
+        # 模拟页读写 accounts 表中的模拟账户记录
+        self.page.set_account(_make_account(tq_account="13800000000", tq_password="pwd"))
         self.assertEqual(self.page.sim_account_edit.text(), "13800000000")
         self.assertEqual(self.page.sim_password_edit.text(), "pwd")
 
@@ -113,9 +123,69 @@ class SimulationPageTest(unittest.TestCase):
         self.assertTrue(self.page.test_btn.isEnabled())
         self.assertEqual(self.page.test_btn.text(), "测试连接")
 
+    def test_on_symbols_fetched_refills_and_restores_refresh_button(self):
+        self.page.symbols_picker.set_fetching(True)
+        self.assertFalse(self.page.symbols_picker._refresh_btn.isEnabled())
+        self.page.on_symbols_fetched(["IF", "IH"])
+        self.assertEqual([r.text() for r in self.page.symbols_picker._radios], ["IF", "IH"])
+        self.assertTrue(self.page.symbols_picker._refresh_btn.isEnabled())
+
+    def test_on_symbols_fetched_keeps_stored_symbol_checked(self):
+        self.page.set_account(_make_account(symbols=["IH"]))
+        self.page.on_symbols_fetched(["IF", "IH"])
+        self.assertEqual(self.page.selected_symbol(), "IH")
+
+    def test_selected_symbol_falls_back_when_list_not_fetched(self):
+        # 列表未获取时回退账户已存品种；0 个或 2 个不猜测
+        self.page.set_account(_make_account(symbols=["IH"]))
+        self.assertEqual(self.page.selected_symbol(), "IH")
+        self.page.set_account(_make_account(symbols=[]))
+        self.assertEqual(self.page.selected_symbol(), "")
+        self.page.set_account(_make_account(symbols=["IF", "IH"]))
+        self.assertEqual(self.page.selected_symbol(), "")
+
+    def test_save_omits_symbols_when_picker_empty(self):
+        # 品种列表未获取时不提交 symbols，避免清空已有选择
+        self.page.sim_account_edit.setText("13800000000")
+        self.page.sim_password_edit.setText("pwd")
+        self.assertFalse(self.page.symbols_picker.has_options())
+        captured = {}
+        with patch("src.presentation.pages.QMessageBox"):
+            self.page.on_save = lambda data: captured.update(data)
+            self.page.save_btn.click()
+        self.assertNotIn("symbols", captured)
+
+    def test_save_includes_selected_symbol(self):
+        self.page.sim_account_edit.setText("13800000000")
+        self.page.sim_password_edit.setText("pwd")
+        self.page.symbols_picker.set_symbols(["IF", "IH"], selected="IF")
+        captured = {}
+        with patch("src.presentation.pages.QMessageBox"):
+            self.page.on_save = lambda data: captured.update(data)
+            self.page.save_btn.click()
+        self.assertEqual(captured.get("symbols"), ["IF"])
+
+    def test_save_blocked_when_options_loaded_but_none_selected(self):
+        self.page.sim_account_edit.setText("13800000000")
+        self.page.sim_password_edit.setText("pwd")
+        self.page.symbols_picker.set_symbols(["IF", "IH"], selected="")
+        captured = {}
+        with patch("src.presentation.pages.QMessageBox"):
+            self.page.on_save = lambda data: captured.update(data)
+            self.page.save_btn.click()
+        self.assertEqual(captured, {})
+
+    def test_sim_account_inputs_labeled(self):
+        # 第 3 步输入行须带「手机号：」「密码：」显式标签
+        labels = [w.text() for w in self.page.findChildren(QLabel)]
+        self.assertIn("手机号：", labels)
+        self.assertIn("密码：", labels)
+        self.assertEqual(self.page.sim_account_edit.placeholderText(), "手机号")
+        self.assertEqual(self.page.sim_password_edit.placeholderText(), "密码")
+
 
 class ConfigServiceLegacyDbTest(unittest.TestCase):
-    """不含 sim 列的历史旧库：DROP 迁移对缺失列应无害，读写正常。"""
+    """不含 sim 列的历史旧库：DROP 迁移与账户迁移对缺失列应无害，读写正常。"""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -138,7 +208,7 @@ class ConfigServiceLegacyDbTest(unittest.TestCase):
         """)
         conn.execute(
             "INSERT INTO app_config (id, server_url, symbols, auto_trade, tq_account, tq_password, initial_balance, database)"
-            " VALUES (1, 'http://127.0.0.1:3080', '[\"SHFE.au2510\"]', 0, '', '', 1000000, ?)",
+            " VALUES (1, 'http://127.0.0.1:3080', '[\"SHFE.au2510\"]', 0, '13800000000', 'pwd', 1000000, ?)",
             (str(self.db_path),),
         )
         conn.commit()
@@ -149,15 +219,10 @@ class ConfigServiceLegacyDbTest(unittest.TestCase):
 
     def test_legacy_db_without_sim_columns_still_works(self):
         service = ConfigService(str(self.db_path))
-        loaded = service.load()
-        self.assertEqual(loaded.tq_account, "")
-        # 旧库上应能正常写入并读回
-        loaded.tq_account = "13800000000"
-        loaded.tq_password = "pwd"
-        service.save(loaded)
-        reloaded = service.load()
-        self.assertEqual(reloaded.tq_account, "13800000000")
-        self.assertEqual(reloaded.tq_password, "pwd")
+        accounts = service.load_accounts()
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0].tq_account, "13800000000")
+        self.assertEqual(accounts[0].tq_password, "pwd")
 
 
 if __name__ == "__main__":

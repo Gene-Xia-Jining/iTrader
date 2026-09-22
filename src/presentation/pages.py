@@ -1,4 +1,5 @@
 from typing import Optional, Callable
+import uuid
 from PySide6.QtWidgets import QMessageBox
 
 from PySide6.QtCore import Qt, QPoint, QRect, QSize, QByteArray
@@ -31,6 +32,13 @@ from ..domain.entities import TradingConfiguration
 from ..infrastructure.proxy import SYSTEM_PROXY
 from .components import Card, PageHeader, StatusPill, StatusStatCard, ValueStatCard
 from .theme import DANGER, MONO_FONT_FAMILY, SUCCESS, WARNING
+
+# 天勤免费版/专业版支持的期货公司（受限于 TqSdk，参见 tqsdk-brokers）。
+# 原存于 broker.json 的分组常量，随 broker.json 删除迁入此处。
+BROKER_GROUPS = {
+    "天勤免费版": ["宏源期货", "徽商期货", "银河期货"],
+    "天勤专业版": ["东方汇金", "光大期货", "国泰君安"],
+}
 
 
 def make_button(text: str, variant: str = "", style: str = "", object_name: str = ""):
@@ -304,13 +312,7 @@ class SimulationPage(BasePage):
 
         layout.addWidget(make_divider())
 
-        layout.addWidget(self._make_label(
-            "3，登录你的快期客户端，从模拟银行转入资金到期货账户。"
-        ))
-
-        layout.addWidget(make_divider())
-
-        layout.addWidget(self._make_label("4，在这里填入："))
+        layout.addWidget(self._make_label("3，在这里填入："))
 
         input_row = QWidget()
         # 透明须走全局 QSS 的 objectName 规则（theme.py）：
@@ -320,12 +322,20 @@ class SimulationPage(BasePage):
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(8)
 
+        phone_label = self._make_label("手机号：")
+        phone_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        input_layout.addWidget(phone_label)
+
         self.sim_account_edit = QLineEdit()
-        self.sim_account_edit.setPlaceholderText("快期模拟账户手机号")
+        self.sim_account_edit.setPlaceholderText("手机号")
         input_layout.addWidget(self.sim_account_edit, 1)
 
+        pwd_label = self._make_label("密码：")
+        pwd_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        input_layout.addWidget(pwd_label)
+
         self.sim_password_edit = QLineEdit()
-        self.sim_password_edit.setPlaceholderText("快期模拟账户密码")
+        self.sim_password_edit.setPlaceholderText("密码")
         self.sim_password_edit.setEchoMode(QLineEdit.Password)
         input_layout.addWidget(self.sim_password_edit, 1)
 
@@ -364,6 +374,13 @@ class SimulationPage(BasePage):
 
         layout.addWidget(input_row)
 
+        layout.addWidget(make_divider())
+
+        # 4，选择交易品种：品种归属账户（模拟/实盘各自独立选择）
+        layout.addWidget(self._make_label("4，选择交易品种："))
+        self.symbols_picker = SymbolPicker()
+        layout.addWidget(self.symbols_picker)
+
         hint = QLabel("提示：模拟帐户不支持组合/套利和期权交易，仅国内商品和股指国债。")
         hint.setObjectName("dim")
         hint.setWordWrap(True)
@@ -374,8 +391,17 @@ class SimulationPage(BasePage):
 
         self.on_save = None  # type: Optional[Callable[[dict], None]]
         self.on_test = None  # type: Optional[Callable[[str, str], None]]
+        # 品种列表刷新回调由控制器注入（拉取 GET /api/symbols 后回填 picker）
+        self.on_fetch_symbols = None  # type: Optional[Callable[[], None]]
+        self.symbols_picker.on_fetch = self._emit_fetch_symbols
+        self._account_symbols: list[str] = []
 
         self.content_layout.addStretch(1)
+
+    def _emit_fetch_symbols(self):
+        if self.on_fetch_symbols:
+            self.symbols_picker.set_fetching(True)
+            self.on_fetch_symbols()
 
     @staticmethod
     def _make_label(text: str) -> QLabel:
@@ -405,18 +431,40 @@ class SimulationPage(BasePage):
         self.sim_password_toggle.setIcon(_make_eye_icon(eye_off=not hidden))
         self.sim_password_toggle.setToolTip("显示密码" if hidden else "隐藏密码")
 
-    def set_config(self, config: TradingConfiguration):
-        """用当前配置填充表单（启动时以及配置保存后调用）。
+    def set_account(self, account) -> None:
+        """用模拟账户记录填充表单（启动时以及账户保存后调用）。
 
-        快期账户与实盘交易页共用，读写同一 tq_* 字段。
+        账户凭据与品种来自 accounts 表，不再从全局 config 读取。
+        account 为 None 时清空（无模拟账户记录）。
         """
-        self.sim_account_edit.setText(config.tq_account)
-        self.sim_password_edit.setText(config.tq_password)
+        if account is None:
+            self.sim_account_edit.setText("")
+            self.sim_password_edit.setText("")
+            self._account_symbols: list[str] = []
+            return
+        self.sim_account_edit.setText(account.tq_account)
+        self.sim_password_edit.setText(account.tq_password)
+        # 记住账户当前品种，控制器调 set_symbols 重建单选时用它回填选中态
+        self._account_symbols = list(account.symbols)
+
+    def selected_symbol(self) -> str:
+        """当前选中的品种：优先取单选框，否则回退账户已存品种（列表未获取时）。"""
+        if self.symbols_picker.has_options():
+            return self.symbols_picker.get_selected()
+        return self._account_symbols[0] if len(self._account_symbols) == 1 else ""
+
+    def on_symbols_fetched(self, server_symbols: list[str]) -> None:
+        """品种列表到达时重建单选框，回填该账户已选品种。"""
+        self.symbols_picker.set_symbols(server_symbols, self.selected_symbol())
+        # set_symbols 不改按钮状态：点刷新拉取成功后须在此恢复，否则按钮永久置灰
+        self.symbols_picker.set_fetching(False)
 
     def _on_save_clicked(self):
         data = {
             "tq_account": self.sim_account_edit.text().strip(),
             "tq_password": self.sim_password_edit.text(),
+            "label": "模拟账户",
+            "account_id": "legacy",
         }
 
         if not data["tq_account"]:
@@ -425,6 +473,13 @@ class SimulationPage(BasePage):
         if not data["tq_password"]:
             QMessageBox.warning(self, "输入错误", "密码不能为空")
             return
+        # 品种归属账户：仅在选择过品种时提交，避免未获取列表时清空已有选择
+        if self.symbols_picker.has_options():
+            selected = self.symbols_picker.get_selected()
+            if not selected:
+                QMessageBox.warning(self, "输入错误", "请选择一个交易品种")
+                return
+            data["symbols"] = [selected]
 
         if self.on_save:
             self.on_save(data)
@@ -528,6 +583,95 @@ class FlowLayout(QLayout):
             x = next_x
             line_height = max(line_height, hint.height())
         return y + line_height - rect.y() + margins.bottom()
+
+
+class SymbolPicker(QWidget):
+    """服务器品种列表 + 单选（FlowLayout 排布），模拟引导页与实盘账户卡片共用。
+
+    品种来自服务器 /api/symbols，on_fetch 由控制器注入（品种归属账户，
+    每个账户各自选择要订阅的品种）。radio 按钮同父级自动互斥。
+    with_refresh=False 时不带刷新按钮（账户卡片共用页面级刷新）。
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None, with_refresh: bool = True):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        # 透明须走全局 QSS 的 objectName 规则（theme.py）：
+        # inline stylesheet 会隔断 app QSS 的类型级规则，QRadioButton 依赖类型级规则
+        self._box = QWidget()
+        self._box.setObjectName("transparentBox")
+        box_row = QHBoxLayout()
+        box_row.setContentsMargins(0, 0, 0, 0)
+        box_row.setSpacing(8)
+        self._flow = FlowLayout(spacing=10)
+        box_row.addLayout(self._flow, 1)
+        if with_refresh:
+            self._refresh_btn = make_button("刷新", variant="secondary")
+            self._refresh_btn.clicked.connect(self._emit_fetch)
+            box_row.addWidget(self._refresh_btn, 0, Qt.AlignTop)
+        else:
+            self._refresh_btn = None
+        self._box.setLayout(box_row)
+
+        self._hint = QLabel("尚未获取品种")
+        self._hint.setObjectName("dim")
+
+        outer.addWidget(self._box)
+        outer.addWidget(self._hint)
+
+        self._radios: list[QRadioButton] = []
+        self.on_fetch: Optional[Callable[[], None]] = None
+
+    def set_symbols(self, server_symbols: list[str], selected: str = ""):
+        """按服务器列表重建单选项；已选择但服务器未返回的品种保留显示，避免静默丢失。"""
+        merged = [str(s) for s in server_symbols]
+        if selected and selected not in merged:
+            merged.append(selected)
+
+        for radio in self._radios:
+            radio.deleteLater()
+        self._radios = []
+        for symbol in merged:
+            radio = QRadioButton(symbol, self._box)
+            radio.setChecked(symbol == selected)
+            radio.setCursor(Qt.PointingHandCursor)
+            self._flow.addWidget(radio)
+            self._radios.append(radio)
+
+        self._hint.setText(
+            f"共 {len(merged)} 个品种，选择一个订阅，保存后生效"
+            if merged
+            else "服务器暂无可订阅品种"
+        )
+
+    def get_selected(self) -> str:
+        for radio in self._radios:
+            if radio.isChecked():
+                return radio.text()
+        return ""
+
+    def has_options(self) -> bool:
+        """是否已获取过品种列表（未获取时不校验/不提交品种）。"""
+        return bool(self._radios)
+
+    def set_fetching(self, fetching: bool) -> None:
+        if self._refresh_btn is not None:
+            self._refresh_btn.setEnabled(not fetching)
+        if fetching:
+            self._hint.setText("正在获取品种...")
+
+    def set_fetch_error(self, message: str) -> None:
+        if self._refresh_btn is not None:
+            self._refresh_btn.setEnabled(True)
+        self._hint.setText(f"获取品种失败: {message}" if message else "获取品种失败")
+
+    def _emit_fetch(self):
+        if self.on_fetch:
+            self.set_fetching(True)
+            self.on_fetch()
 
 
 class ServerUrlTestRow(QWidget):
@@ -667,62 +811,6 @@ class SettingsPage(BasePage):
         proxy_hint.setWordWrap(True)
         form.addRow("", proxy_hint)
 
-        # 订阅品种：从服务器拉取可订阅列表，勾选后随保存写入配置
-        self.symbol_refresh_btn = make_button("刷新品种", variant="secondary")
-        self.symbol_status_label = QLabel("")
-        self.symbol_status_label.setWordWrap(True)
-        refresh_row = QHBoxLayout()
-        refresh_row.setSpacing(8)
-        refresh_row.addWidget(self.symbol_refresh_btn)
-        refresh_row.addWidget(self.symbol_status_label, 1)
-
-        self.symbols_box = QWidget()
-        # 容器 QWidget 会匹配全局窗口底色规则，白卡内需显式透明
-        self.symbols_box.setStyleSheet("background: transparent;")
-        self.symbols_flow = FlowLayout(self.symbols_box, spacing=10)
-
-        # 添加品种：先输入品种代码，再从服务器支持的交易所中单选，提交后持久化到品种库
-        self.symbol_add_edit = QLineEdit()
-        self.symbol_add_edit.setPlaceholderText("品种代码，例如 SHFE.au2510")
-        self.symbol_add_btn = make_button("添加品种", variant="secondary")
-        add_row = QHBoxLayout()
-        add_row.setSpacing(8)
-        add_row.addWidget(self.symbol_add_edit, 1)
-        add_row.addWidget(self.symbol_add_btn)
-
-        self.exchange_area = QWidget()
-        self.exchange_area.setStyleSheet("background: transparent;")
-        self.exchange_hint = QLabel("支持的交易所（单选）：")
-        self.exchange_hint.setObjectName("dim")
-        self.exchange_hint.setWordWrap(True)
-        # FlowLayout 构造时即安装为父级布局，需由内层子控件承载
-        self.exchange_box = QWidget()
-        self.exchange_box.setStyleSheet("background: transparent;")
-        self.exchange_flow = FlowLayout(self.exchange_box, spacing=10)
-        exchange_layout = QVBoxLayout(self.exchange_area)
-        exchange_layout.setContentsMargins(0, 0, 0, 0)
-        exchange_layout.setSpacing(6)
-        exchange_layout.addWidget(self.exchange_hint)
-        exchange_layout.addWidget(self.exchange_box)
-        # 没选（输入）交易品种之前，交易所不可选
-        self.exchange_area.setEnabled(False)
-
-        self.symbols_hint = QLabel("从服务器获取可订阅的品种列表后，选择要订阅的品种")
-        self.symbols_hint.setObjectName("dim")
-        self.symbols_hint.setWordWrap(True)
-
-        symbols_panel = QWidget()
-        symbols_panel.setStyleSheet("background: transparent;")
-        symbols_layout = QVBoxLayout(symbols_panel)
-        symbols_layout.setContentsMargins(0, 0, 0, 0)
-        symbols_layout.setSpacing(8)
-        symbols_layout.addLayout(refresh_row)
-        symbols_layout.addLayout(add_row)
-        symbols_layout.addWidget(self.exchange_area)
-        symbols_layout.addWidget(self.symbols_box)
-        symbols_layout.addWidget(self.symbols_hint)
-        form.addRow("订阅品种:", symbols_panel)
-
         # 软件更新：手动检查入口 + 启动自动检查开关（随保存按钮持久化）
         form.addRow(make_divider())
 
@@ -752,22 +840,9 @@ class SettingsPage(BasePage):
 
         # For compatibility, we keep the on_save callback to be set externally
         self.on_save = None  # type: Optional[Callable[[dict], None]]
-        # 由外部（控制器）设置，接收规范化前的服务器地址
-        self.on_fetch_symbols = None  # type: Optional[Callable[[str], None]]
-        # 拉取交易所列表：接收服务器地址；提交品种：接收 (服务器地址, 品种, 交易所)
-        self.on_fetch_exchanges = None  # type: Optional[Callable[[str], None]]
-        self.on_submit_symbol = None  # type: Optional[Callable[[str, str, str], None]]
         # 手动检查更新（控制器注入）
         self.on_check_update = None  # type: Optional[Callable[[], None]]
 
-        self._symbol_radios: list[QRadioButton] = []
-        self._config_symbols: list[str] = []
-        self._exchange_radios: list[QRadioButton] = []
-        self._exchanges: list[str] = []
-
-        self.symbol_refresh_btn.clicked.connect(self._emit_fetch_symbols)
-        self.symbol_add_btn.clicked.connect(self._on_add_symbol_clicked)
-        self.symbol_add_edit.textChanged.connect(self._on_symbol_text_changed)
         self.update_check_btn.clicked.connect(self.start_check_update)
 
         self.content_layout.addStretch(1)
@@ -776,8 +851,6 @@ class SettingsPage(BasePage):
         """用当前配置填充表单（启动时以及配置保存后调用）。"""
         self.server_url_edit.setText(config.server_url)
         self._set_proxy_value(config.proxy_url)
-        self._config_symbols = list(config.symbols)
-        self._sync_symbol_radios()
         self.auto_check_update_checkbox.setChecked(config.auto_check_update)
 
     def _set_proxy_value(self, proxy_url: str):
@@ -815,154 +888,11 @@ class SettingsPage(BasePage):
 
     def set_update_status(self, message: str, state=None):
         """回写检查更新结果：state 为 True 成功 / False 失败 / None 进行中。"""
-        self.update_check_btn.setEnabled(True)
+        self.update_check_btn.setEnabled(state is not None)
         self.update_status_label.setText(message)
         color = WARNING if state is None else (SUCCESS if state else DANGER)
         # 白卡内的 QLabel 会匹配全局窗口底色规则，需显式透明
         self.update_status_label.setStyleSheet(f"color: {color}; background: transparent;")
-
-    def maybe_refresh_symbols(self):
-        """切换到设置页时自动拉取品种与交易所列表；地址为空时跳过。"""
-        url = self.server_url_edit.text().strip()
-        if not url:
-            return
-        if self.on_fetch_symbols is not None:
-            self._emit_fetch_symbols()
-        if self.on_fetch_exchanges is not None:
-            self.on_fetch_exchanges(url)
-
-    def set_symbols_result(self, success: bool, message: str, symbols: list):
-        """刷新品种请求的完成回调（由控制器的信号驱动，UI 线程执行）。"""
-        self.symbol_refresh_btn.setEnabled(True)
-        self._set_symbol_status(message, SUCCESS if success else DANGER)
-        if success:
-            self._rebuild_symbol_radios(symbols)
-
-    def set_exchanges_result(self, success: bool, message: str, exchanges: list):
-        """交易所列表请求的完成回调（由控制器的信号驱动，UI 线程执行）。"""
-        if success:
-            self._exchanges = [
-                str(item["name"]) for item in exchanges
-                if isinstance(item, dict) and item.get("name")
-            ]
-            self.exchange_hint.setText("支持的交易所（单选）：")
-            self.exchange_hint.setStyleSheet("")
-        else:
-            self._exchanges = []
-            self.exchange_hint.setText(f"获取交易所失败: {message}")
-            self.exchange_hint.setStyleSheet(f"color: {WARNING}; background: transparent;")
-        self._rebuild_exchange_radios()
-
-    def set_symbol_submit_result(self, success: bool, message: str):
-        """添加品种请求的完成回调（由控制器的信号驱动，UI 线程执行）。"""
-        self.symbol_add_btn.setEnabled(True)
-        self._set_symbol_status(message, SUCCESS if success else DANGER)
-        if success:
-            # 清空品种输入（交易所随之回到禁用态），并刷新品种列表让新品种立即可选
-            self.symbol_add_edit.clear()
-            self._emit_fetch_symbols()
-
-    def _on_symbol_text_changed(self, text: str):
-        """先选（输入）交易品种，之后交易所才可选。"""
-        self.exchange_area.setEnabled(bool(text.strip()))
-
-    def _rebuild_exchange_radios(self):
-        """重建交易所单选项；同属 exchange_area 的 QRadioButton 自动互斥。"""
-        while self.exchange_flow.count():
-            item = self.exchange_flow.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                widget.deleteLater()
-        self._exchange_radios = []
-
-        for index, name in enumerate(self._exchanges):
-            radio = QRadioButton(name, self.exchange_box)
-            radio.setChecked(index == 0)
-            radio.setCursor(Qt.PointingHandCursor)
-            self.exchange_flow.addWidget(radio)
-            self._exchange_radios.append(radio)
-
-    def _selected_exchange(self) -> str:
-        for radio in self._exchange_radios:
-            if radio.isChecked():
-                return radio.text()
-        return ""
-
-    def _on_add_symbol_clicked(self):
-        url = self.server_url_edit.text().strip()
-        if not url:
-            self._set_symbol_status("请先填写服务器地址", DANGER)
-            return
-        symbol = self.symbol_add_edit.text().strip()
-        if not symbol:
-            self._set_symbol_status("请输入品种代码", DANGER)
-            return
-        exchange = self._selected_exchange()
-        if not exchange:
-            self._set_symbol_status("请选择交易所", DANGER)
-            return
-        self.symbol_add_btn.setEnabled(False)
-        self._set_symbol_status("正在添加品种...", WARNING)
-        if self.on_submit_symbol:
-            self.on_submit_symbol(url, symbol, exchange)
-        else:
-            self._set_symbol_status("添加品种功能未启用", DANGER)
-            self.symbol_add_btn.setEnabled(True)
-
-    def _set_symbol_status(self, message: str, color: str):
-        self.symbol_status_label.setText(message)
-        self.symbol_status_label.setStyleSheet(
-            f"color: {color}; background: transparent;"
-        )
-
-    def _emit_fetch_symbols(self):
-        url = self.server_url_edit.text().strip()
-        if not url:
-            self._set_symbol_status("请先填写服务器地址", DANGER)
-            return
-        self.symbol_refresh_btn.setEnabled(False)
-        self._set_symbol_status("正在获取品种...", WARNING)
-        if self.on_fetch_symbols:
-            self.on_fetch_symbols(url)
-        else:
-            self._set_symbol_status("获取品种功能未启用", DANGER)
-            self.symbol_refresh_btn.setEnabled(True)
-
-    def _rebuild_symbol_radios(self, server_symbols: list):
-        """按服务器返回重建单选项；配置中存在但服务器未返回的品种保留显示，避免静默丢失。"""
-        merged = [str(s) for s in server_symbols]
-        for symbol in self._config_symbols:
-            if symbol not in merged:
-                merged.append(symbol)
-
-        while self.symbols_flow.count():
-            item = self.symbols_flow.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                widget.deleteLater()
-        self._symbol_radios = []
-
-        # 系统一次只订阅一个品种：历史配置含多个时，仅选中第一个匹配项
-        selected = next((s for s in self._config_symbols if s in merged), None)
-
-        for symbol in merged:
-            radio = QRadioButton(symbol, self.symbols_box)
-            radio.setChecked(symbol == selected)
-            radio.setCursor(Qt.PointingHandCursor)
-            self.symbols_flow.addWidget(radio)
-            self._symbol_radios.append(radio)
-
-        if merged:
-            self.symbols_hint.setText(f"共 {len(merged)} 个品种，选择要订阅的品种，保存后生效")
-        else:
-            self.symbols_hint.setText("服务器暂无可订阅品种")
-
-    def _sync_symbol_radios(self):
-        """把选中状态同步为当前配置中的品种（配置变化后调用）。"""
-        available = {radio.text() for radio in self._symbol_radios}
-        selected = next((s for s in self._config_symbols if s in available), None)
-        for radio in self._symbol_radios:
-            radio.setChecked(radio.text() == selected)
 
     def _on_save_clicked(self):
         data = {
@@ -976,14 +906,6 @@ class SettingsPage(BasePage):
             QMessageBox.warning(self, "输入错误", "服务器地址不能为空")
             return
 
-        # 仅在已获取到品种列表时提交选择结果；未获取过则保留现有订阅不变
-        if self._symbol_radios:
-            selected = [radio.text() for radio in self._symbol_radios if radio.isChecked()]
-            if not selected:
-                QMessageBox.warning(self, "输入错误", "请选择一个订阅品种")
-                return
-            data["symbols"] = selected[0]
-
         # Call the external save callback
         if self.on_save:
             self.on_save(data)
@@ -993,9 +915,15 @@ class SettingsPage(BasePage):
 
 
 class AccountPage(BasePage):
+    """实盘交易账户卡片列表。
+
+    每张卡片一个独立的期货公司 QButtonGroup（每账户可选不同公司），
+    支持多个实盘账户并存。模拟账户全局仅一个，在模拟页编辑。
+    """
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.header = PageHeader("实盘交易", "期货公司、资金账号、交易密码与快期账户，保存后即时生效。")
+        self.header = PageHeader("实盘交易", "添加多个实盘账户，每个账户独立选择期货公司与品种，保存后即时生效。")
         self.content_layout.addWidget(self.header)
 
         card = Card()
@@ -1003,66 +931,14 @@ class AccountPage(BasePage):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(10)
-        # macOS 平台默认 FieldsStayAtSizeHint 会导致字段列不撑宽、期货公司单选竖排
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        # 顶部添加按钮
+        self.add_btn = make_button("＋ 添加实盘账户", variant="secondary")
+        self.add_btn.clicked.connect(self._on_add_clicked)
+        layout.addWidget(self.add_btn, 0, Qt.AlignLeft)
 
-        # 期货公司：按天勤版本分组横向单选，选择结果持久化到 broker.json
-        self.broker_area = QWidget()
-        # 容器 QWidget 会匹配全局窗口底色规则，白卡内需显式透明
-        self.broker_area.setStyleSheet("background: transparent;")
-        broker_layout = QVBoxLayout(self.broker_area)
-        broker_layout.setContentsMargins(0, 0, 0, 0)
-        broker_layout.setSpacing(6)
-        self._broker_group = QButtonGroup(self.broker_area)
-        self._broker_group.setExclusive(True)
-        self._broker_rows: list[QWidget] = []
-        form.addRow("期货公司:", self.broker_area)
-
-        self.trade_account_edit = QLineEdit()
-        self.trade_account_edit.setPlaceholderText("资金账号 (实盘必填)")
-        form.addRow("资金账号:", self.trade_account_edit)
-
-        self.trade_password_edit = QLineEdit()
-        self.trade_password_edit.setPlaceholderText("交易密码 (实盘必填)")
-        self.trade_password_edit.setEchoMode(QLineEdit.Password)
-        form.addRow("交易密码:", self.trade_password_edit)
-
-        self.tq_account_edit = QLineEdit()
-        self.tq_account_edit.setPlaceholderText("快期账号")
-        form.addRow("快期账号:", self.tq_account_edit)
-
-        self.tq_password_edit = QLineEdit()
-        self.tq_password_edit.setPlaceholderText("快期密码")
-        self.tq_password_edit.setEchoMode(QLineEdit.Password)
-        form.addRow("快期密码:", self.tq_password_edit)
-
-        self.balance_edit = QLineEdit()
-        self.balance_edit.setPlaceholderText("10000000")
-        form.addRow("初始资金:", self.balance_edit)
-
-        self.symbols_edit = QLineEdit()
-        self.symbols_edit.setPlaceholderText("品种1,品种2,...")
-        form.addRow("交易品种:", self.symbols_edit)
-
-        symbols_hint = QLabel("品种以逗号分隔，例如: SHFE.au2510,INE.sc2510")
-        symbols_hint.setObjectName("dim")
-        form.addRow("", symbols_hint)
-
-        layout.addLayout(form)
-
-        self.save_btn = make_button("保存", variant="primary")
-        layout.addWidget(make_divider())
-        layout.addWidget(self.save_btn, 0, Qt.AlignRight)
-        self.save_btn.clicked.connect(self._on_save_clicked)
-
-        # 受限于 TqSdk，我们支持的期货公司参见：tqsdk-brokers
+        # 期货公司支持范围说明
         broker_hint = QLabel(
-            "受限于 TqSdk，我们支持的期货公司参见："
+            "期货公司按天勤版本分组，各账户可独立选择；受限于 TqSdk，支持范围参见："
             '<a href="https://www.shinnytech.com/articles/reference/tqsdk-brokers">'
             "tqsdk-brokers</a>"
         )
@@ -1071,39 +947,171 @@ class AccountPage(BasePage):
         broker_hint.setTextInteractionFlags(Qt.TextBrowserInteraction)
         layout.addWidget(broker_hint)
 
-        layout.addStretch(1)
+        # 卡片容器
+        self._cards_layout = QVBoxLayout()
+        self._cards_layout.setSpacing(10)
+        self._cards_layout.setContentsMargins(0, 0, 0, 0)
+        self._cards: dict[str, "_AccountCard"] = {}
+        layout.addLayout(self._cards_layout)
+
         self.content_layout.addWidget(card)
 
         self.on_save = None  # type: Optional[Callable[[dict], None]]
+        self.on_delete = None  # type: Optional[Callable[[str], None]]
 
         self.content_layout.addStretch(1)
 
-    def set_config(self, config: TradingConfiguration):
-        """用当前配置填充表单（启动时以及配置保存后调用）。"""
-        self.trade_account_edit.setText(config.trade_account)
-        self.trade_password_edit.setText(config.trade_password)
-        self.tq_account_edit.setText(config.tq_account)
-        self.tq_password_edit.setText(config.tq_password)
-        self.balance_edit.setText(str(config.initial_balance))
-        self.symbols_edit.setText(",".join(config.symbols))
+    # ---- 卡片管理 ----
+
+    def _on_add_clicked(self):
+        card_id = f"live-{uuid.uuid4().hex[:8]}"
+        card = _AccountCard(card_id, self, groups=BROKER_GROUPS)
+        card.on_save = self._card_save
+        card.on_delete = self._card_delete
+        self._cards[card_id] = card
+        self._cards_layout.addWidget(card)
+
+    def _card_save(self, data: dict):
+        if self.on_save:
+            self.on_save(data)
+
+    def _card_delete(self, card_id: str):
+        card = self._cards.pop(card_id, None)
+        if card is not None:
+            self._cards_layout.removeWidget(card)
+            card.deleteLater()
+        if self.on_delete:
+            self.on_delete(card_id)
+
+    def _ensure_card(self, account) -> _AccountCard:
+        """按账户记录建/更新卡片（幂等）。"""
+        card = self._cards.get(account.id)
+        if card is None:
+            card = _AccountCard(account.id, self, groups=BROKER_GROUPS)
+            card.on_save = self._card_save
+            card.on_delete = self._card_delete
+            self._cards[account.id] = card
+            self._cards_layout.addWidget(card)
+        card.fill(account)
+        return card
+
+    # ---- 对外接口 ----
+
+    def set_accounts(self, accounts: list) -> None:
+        """用账户记录列表重建卡片（启动时及保存后调用）。仅显示实盘账户。"""
+        for card in self._cards.values():
+            self._cards_layout.removeWidget(card)
+            card.deleteLater()
+        self._cards = {}
+        for account in accounts:
+            if account.kind == "live":
+                self._ensure_card(account)
 
     def set_brokers(self, groups: dict, selected: str = ""):
-        """按天勤版本分组构建期货公司单选项（每组一行、横向排列）。"""
-        for row_box in self._broker_rows:
-            row_box.deleteLater()
-        self._broker_rows = []
+        """兼容旧调用：期货公司分组为静态常量（BROKER_GROUPS），各账户选中随账户记录回填。
 
-        # QButtonGroup 无 removeButton，重建时整个组重建
-        self._broker_group.deleteLater()
-        self._broker_group = QButtonGroup(self.broker_area)
+        卡片在创建时已按常量构建 radio，此处无需重建。
+        """
+        return
+
+    def card_count(self) -> int:
+        return len(self._cards)
+
+
+class _AccountCard(Card):
+    """单个实盘账户卡片：标签、期货公司、资金账号、交易密码、快期账号/密码、品种、启用开关。
+
+    每张卡片持有独立的期货公司 QButtonGroup（跨账户不互斥，各账户可选不同公司）。
+    保存产出 data dict（含 account_id），删除产出 account_id。
+    """
+
+    def __init__(self, account_id: str, page: "AccountPage", groups: dict):
+        super().__init__(page)
+        self.account_id = account_id
+        self._page = page
+        self._groups = groups
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        # 标题行：标签 + 启用开关 + 删除
+        head = QHBoxLayout()
+        self.label_edit = QLineEdit()
+        self.label_edit.setPlaceholderText("账户名称（如：光大-主力）")
+        head.addWidget(self.label_edit, 1)
+        self.enabled_check = QCheckBox("启用")
+        self.enabled_check.setChecked(True)
+        head.addWidget(self.enabled_check, 0, Qt.AlignVCenter)
+        self.delete_btn = make_button("删除", variant="danger")
+        self.delete_btn.clicked.connect(self._on_delete_clicked)
+        head.addWidget(self.delete_btn, 0, Qt.AlignVCenter)
+        layout.addLayout(head)
+
+        # 期货公司单选：每账户独立 QButtonGroup（跨账户不互斥），构建一次
+        self._build_brokers(groups)
+
+        # 资金账号 / 交易密码
+        layout.addWidget(self._make_labeled_row("资金账号:"))
+        self.trade_account_edit = QLineEdit()
+        self.trade_account_edit.setPlaceholderText("资金账号 (实盘必填)")
+        layout.addWidget(self.trade_account_edit)
+        layout.addWidget(self._make_labeled_row("交易密码:"))
+        self.trade_password_edit = QLineEdit()
+        self.trade_password_edit.setPlaceholderText("交易密码 (实盘必填)")
+        self.trade_password_edit.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.trade_password_edit)
+
+        # 快期账号 / 快期密码
+        layout.addWidget(self._make_labeled_row("快期账号:"))
+        self.tq_account_edit = QLineEdit()
+        self.tq_account_edit.setPlaceholderText("快期账号")
+        layout.addWidget(self.tq_account_edit)
+        layout.addWidget(self._make_labeled_row("快期密码:"))
+        self.tq_password_edit = QLineEdit()
+        self.tq_password_edit.setPlaceholderText("快期密码")
+        self.tq_password_edit.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.tq_password_edit)
+
+        # 品种（与模拟页共用的服务器品种列表，卡片内不带刷新按钮）
+        layout.addWidget(self._make_labeled_row("交易品种:"))
+        self.symbols_picker = SymbolPicker(self, with_refresh=False)
+        layout.addWidget(self.symbols_picker)
+
+        # 保存
+        self.save_btn = make_button("保存", variant="primary")
+        self.save_btn.clicked.connect(self._on_save_clicked)
+        layout.addWidget(self.save_btn, 0, Qt.AlignRight)
+
+        self.on_save = None  # type: Optional[Callable[[dict], None]]
+        self.on_delete = None  # type: Optional[Callable[[str], None]]
+
+    def _make_labeled_row(self, text: str) -> QLabel:
+        label = QLabel(text, self)
+        label.setObjectName("dim")
+        return label
+
+    def _build_brokers(self, groups: dict, selected: str = "") -> None:
+        """按天勤版本分组构建卡片内期货公司单选项（每账户独立 QButtonGroup）。
+
+        仅在卡片创建时构建一次；后续只通过 _select_broker 调整选中态。
+        """
+        self._broker_rows: list[QWidget] = []
+        self._broker_group = QButtonGroup(self)
         self._broker_group.setExclusive(True)
 
         names = [name for group in groups.values() for name in group]
         checked_name = selected if selected in names else (names[0] if names else "")
 
-        layout = self.broker_area.layout()
+        # 期货公司容器须走透明 objectName 规则（theme.py），避免卡内灰条
+        broker_area = QWidget(self)
+        broker_area.setObjectName("transparentBox")
+        broker_layout = QVBoxLayout(broker_area)
+        broker_layout.setContentsMargins(0, 0, 0, 0)
+        broker_layout.setSpacing(6)
+
         for group_name, brokers in groups.items():
-            row_box = QWidget(self.broker_area)
+            row_box = QWidget(broker_area)
             row_box.setStyleSheet("background: transparent;")
             row = QHBoxLayout(row_box)
             row.setContentsMargins(0, 0, 0, 0)
@@ -1113,35 +1121,54 @@ class AccountPage(BasePage):
             row.addWidget(group_label)
             for name in brokers:
                 radio = QRadioButton(name, row_box)
-                # 免费/专业版分行显示、分属不同父级，需同一 QButtonGroup 保证跨组单选
                 self._broker_group.addButton(radio)
                 radio.setChecked(name == checked_name)
                 radio.setCursor(Qt.PointingHandCursor)
                 row.addWidget(radio)
             row.addStretch(1)
-            layout.addWidget(row_box)
+            broker_layout.addWidget(row_box)
             self._broker_rows.append(row_box)
+
+        # 插入到标题行（第 0 项）之后
+        self.layout().insertWidget(1, broker_area)
+        self._broker_area = broker_area
+
+    def _select_broker(self, name: str) -> None:
+        """在已构建的卡片内单选中回填选中态。"""
+        if not name:
+            return
+        for radio in self._broker_group.buttons():
+            if radio.text() == name:
+                radio.setChecked(True)
+                return
 
     def _selected_broker(self) -> str:
         checked = self._broker_group.checkedButton()
         return checked.text() if checked else ""
 
+    def set_brokers(self, groups: dict) -> None:
+        """页面刷新分组时重挂卡片内单选（保留当前选中）。"""
+        self._build_brokers(groups, self._selected_broker())
+
     def _on_save_clicked(self):
         data = {
+            "account_id": self.account_id,
+            "kind": "live",
+            "label": self.label_edit.text().strip(),
             "broker": self._selected_broker(),
             "trade_account": self.trade_account_edit.text().strip(),
             "trade_password": self.trade_password_edit.text(),
             "tq_account": self.tq_account_edit.text().strip(),
             "tq_password": self.tq_password_edit.text(),
-            "initial_balance": self.balance_edit.text().strip(),
-            "symbols": self.symbols_edit.text().strip(),
+            "enabled": self.enabled_check.isChecked(),
         }
 
-        # Validate
         if not data["broker"]:
             QMessageBox.warning(self, "输入错误", "请选择期货公司")
             return
-        if (data["trade_account"] and not data["trade_password"]) or (data["trade_password"] and not data["trade_account"]):
+        if (data["trade_account"] and not data["trade_password"]) or (
+            data["trade_password"] and not data["trade_account"]
+        ):
             QMessageBox.warning(self, "输入错误", "资金账号与交易密码需同时填写")
             return
         if not data["tq_account"]:
@@ -1150,23 +1177,30 @@ class AccountPage(BasePage):
         if not data["tq_password"]:
             QMessageBox.warning(self, "输入错误", "快期密码不能为空")
             return
-        if not data["initial_balance"]:
-            QMessageBox.warning(self, "输入错误", "初始资金不能为空")
-            return
-        try:
-            balance = float(data["initial_balance"])
-            if balance <= 0:
-                raise ValueError
-        except ValueError:
-            QMessageBox.warning(self, "输入错误", "初始资金必须是正数")
-            return
-        if not data["symbols"]:
-            QMessageBox.warning(self, "输入错误", "交易品种不能为空")
-            return
+        if self.symbols_picker.has_options():
+            selected = self.symbols_picker.get_selected()
+            if not selected:
+                QMessageBox.warning(self, "输入错误", "请选择一个交易品种")
+                return
+            data["symbols"] = [selected]
 
-        # Call the external save callback
         if self.on_save:
             self.on_save(data)
-            QMessageBox.information(self, "保存成功", "配置已保存并生效")
+            QMessageBox.information(self, "保存成功", "实盘账户已保存")
         else:
             QMessageBox.warning(self, "错误", "保存回调未设置")
+
+    def _on_delete_clicked(self):
+        self._page._card_delete(self.account_id)
+
+    def fill(self, account) -> None:
+        """用账户记录回填卡片表单。"""
+        self.label_edit.setText(account.label)
+        self._select_broker(account.broker)
+        self.trade_account_edit.setText(account.trade_account)
+        self.trade_password_edit.setText(account.trade_password)
+        self.tq_account_edit.setText(account.tq_account)
+        self.tq_password_edit.setText(account.tq_password)
+        self.enabled_check.setChecked(account.enabled)
+        if account.symbols:
+            self.symbols_picker.set_symbols(account.symbols, selected=account.symbols[0])

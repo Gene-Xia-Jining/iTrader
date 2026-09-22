@@ -62,23 +62,9 @@ class ConfigDialog(QDialog):
         self.server_url_edit = self.server_test.url_edit
         form.addRow("服务器地址:", self.server_test)
 
-        self.tq_account_edit = QLineEdit(self._vm.tq_account)
-        form.addRow("快期账号:", self.tq_account_edit)
-
-        self.tq_password_edit = QLineEdit(self._vm.tq_password)
-        self.tq_password_edit.setEchoMode(QLineEdit.Password)
-        form.addRow("快期密码:", self.tq_password_edit)
-
-        self.balance_edit = QLineEdit(str(self._vm.initial_balance))
-        self.balance_edit.setPlaceholderText("10000000")
-        form.addRow("初始资金:", self.balance_edit)
-
-        self.symbols_edit = QLineEdit(self._vm.symbols_text())
-        self.symbols_edit.setPlaceholderText("品种1,品种2,...")
-        symbols_hint = QLabel("(逗号分隔，例如: SHFE.au2510,INE.sc2510)")
-        symbols_hint.setStyleSheet("color: #6c7086; font-size: 11px;")
-        form.addRow("交易品种:", self.symbols_edit)
-        form.addRow("", symbols_hint)
+        hint = QLabel("交易账户在「实盘交易」页维护，模拟账户在「模拟交易」页维护。")
+        hint.setObjectName("dim")
+        form.addRow("", hint)
 
         layout.addLayout(form)
 
@@ -95,10 +81,6 @@ class ConfigDialog(QDialog):
     def _submit(self):
         ok, msg = self._vm.submit(
             server_url=self.server_url_edit.text().strip(),
-            tq_account=self.tq_account_edit.text(),
-            tq_password=self.tq_password_edit.text(),
-            initial_balance_str=self.balance_edit.text().strip(),
-            symbols_str=self.symbols_edit.text(),
         )
         if not ok:
             QMessageBox.warning(self, "输入错误", msg)
@@ -135,8 +117,6 @@ class MainWindow(QMainWindow):
         on_test_simulation=None,
         on_test_server=None,
         on_fetch_symbols=None,
-        on_fetch_exchanges=None,
-        on_submit_symbol=None,
         on_check_update=None,
         on_cancel_update=None,
         parent: Optional[QWidget] = None,
@@ -155,8 +135,6 @@ class MainWindow(QMainWindow):
         self._on_test_simulation = on_test_simulation
         self._on_test_server = on_test_server
         self._on_fetch_symbols = on_fetch_symbols
-        self._on_fetch_exchanges = on_fetch_exchanges
-        self._on_submit_symbol = on_submit_symbol
         self._on_check_update = on_check_update
         self._on_cancel_update = on_cancel_update
         self._update_progress_dlg = None
@@ -281,21 +259,17 @@ class MainWindow(QMainWindow):
         self.simulation_page = SimulationPage()
         self.account_page = AccountPage()
         self.settings_page = SettingsPage()
-        # Connect settings page save callback
+        # Connect settings page save callback（设置页只保留服务器/代理/更新）
         self.settings_page.on_save = self._on_save_config
         self.settings_page.server_test.on_test = self._on_test_server
-        self.settings_page.on_fetch_symbols = self._on_fetch_symbols
-        self.settings_page.on_fetch_exchanges = self._on_fetch_exchanges
-        self.settings_page.on_submit_symbol = self._on_submit_symbol
         self.settings_page.on_check_update = self._on_check_update
         self.settings_page.set_config(self._vm.config)
         # Connect account page save callback
         self.account_page.on_save = self._on_save_account
-        self.account_page.set_config(self._vm.config)
         # Connect simulation page save callback
         self.simulation_page.on_save = self._on_save_simulation
         self.simulation_page.on_test = self._on_test_simulation
-        self.simulation_page.set_config(self._vm.config)
+        self.simulation_page.on_fetch_symbols = self._on_fetch_symbols
         for page in (
             self.dashboard_page,
             self.token_page,
@@ -332,8 +306,8 @@ class MainWindow(QMainWindow):
         self.simulation_btn.setChecked(index == 3)
         self.account_btn.setChecked(index == 4)
         self.settings_btn.setChecked(index == 5)
-        if index == 5:
-            self.settings_page.maybe_refresh_symbols()
+        if index in (3, 4) and self._on_fetch_symbols:
+            self._on_fetch_symbols()
 
     def _build_statusbar(self):
         bar = self.statusBar()
@@ -381,12 +355,6 @@ class MainWindow(QMainWindow):
         self._vm.configChanged.connect(
             lambda: self.settings_page.set_config(self._vm.config)
         )
-        self._vm.configChanged.connect(
-            lambda: self.account_page.set_config(self._vm.config)
-        )
-        self._vm.configChanged.connect(
-            lambda: self.simulation_page.set_config(self._vm.config)
-        )
         self._vm.configChanged.connect(self._refresh_dashboard_metrics)
         self._on_server_status_changed(self._vm.serverStatus)
         self._on_server_status_color_changed(self._vm.serverStatusColor)
@@ -409,11 +377,21 @@ class MainWindow(QMainWindow):
         self._sync_auto_trade_button(self._vm.tradingActive)
 
     def _refresh_dashboard_metrics(self):
-        """配置变化时同步仪表盘的资金、品种数与服务器地址说明。"""
+        """配置变化时同步仪表盘的服务器地址说明。账户资金与活跃品种由账户同步驱动。"""
         config = self._vm.config
-        self.dashboard_page.balance_card.set_value(f"{config.initial_balance:,.2f}")
-        self.dashboard_page.symbols_card.set_value(str(len(config.symbols)))
         self.dashboard_page.server_status.set_secondary(config.server_url or "未配置服务器地址")
+
+    def sync_accounts_to_dashboard(self, accounts: list):
+        """用账户列表刷新仪表盘统计：活跃品种数与账户数。"""
+        all_symbols = set()
+        for a in accounts:
+            if a.enabled:
+                all_symbols.update(a.symbols)
+        live_count = sum(1 for a in accounts if a.kind == "live" and a.enabled)
+        sim_count = sum(1 for a in accounts if a.kind == "sim" and a.enabled)
+        # 初始资金不再为配置项，显示启用账户概况
+        self.dashboard_page.balance_card.set_value(f"{live_count} 实盘 / {sim_count} 模拟")
+        self.dashboard_page.symbols_card.set_value(str(len(all_symbols)))
 
     def _sync_trade_caption(self):
         self.dashboard_page.trade_status.set_secondary(

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from src.domain.entities import Account
 from src.infrastructure.security.crypto import PasswordCipher, load_or_create_key
 from tests.test_simulation_page import _make_config
 from src.infrastructure.config.config_service import ConfigService
@@ -12,6 +13,23 @@ from src.infrastructure.config.config_service import ConfigService
 
 def _cipher(tmp: Path) -> PasswordCipher:
     return PasswordCipher(load_or_create_key(tmp / ".secret.key"))
+
+
+def _make_account(**overrides):
+    fields = dict(
+        id="acc-1",
+        kind="live",
+        label="实盘账户",
+        tq_account="13800000000",
+        tq_password="tq-pwd",
+        broker="宏源期货",
+        trade_account="123456",
+        trade_password="trade-pwd",
+        symbols=["SHFE.au2510"],
+        enabled=True,
+    )
+    fields.update(overrides)
+    return Account(**fields)
 
 
 class LoadOrCreateKeyTest(unittest.TestCase):
@@ -69,99 +87,131 @@ class ConfigServiceEncryptionTest(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _stored(self, column: str) -> str:
+    def _stored_account(self, column: str, account_id: str) -> str:
         conn = sqlite3.connect(self.db_path)
         try:
-            return conn.execute(f"SELECT {column} FROM app_config WHERE id = 1").fetchone()[0]
+            return conn.execute(
+                f"SELECT {column} FROM accounts WHERE id = ?", (account_id,)
+            ).fetchone()[0]
         finally:
             conn.close()
 
     def test_passwords_stored_encrypted(self):
-        self.service.save(_make_config(
-            tq_password="tq-pwd",
-            trade_password="trade-pwd",
-            database_path=str(self.db_path),
-        ))
+        self.service.save_account(_make_account())
         for column, plain in [
             ("tq_password", "tq-pwd"),
             ("trade_password", "trade-pwd"),
         ]:
-            stored = self._stored(column)
+            stored = self._stored_account(column, "acc-1")
             self.assertTrue(stored.startswith("enc:v1:"), f"{column} 未加密: {stored}")
             self.assertNotIn(plain, stored)
 
-    def test_load_returns_plaintext(self):
-        self.service.save(_make_config(
-            tq_password="tq-pwd",
-            trade_password="trade-pwd",
-            database_path=str(self.db_path),
-        ))
-        loaded = self.service.load()
-        self.assertEqual(loaded.tq_password, "tq-pwd")
-        self.assertEqual(loaded.trade_password, "trade-pwd")
+    def test_load_accounts_returns_plaintext(self):
+        self.service.save_account(_make_account())
+        accounts = self.service.load_accounts()
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0].tq_password, "tq-pwd")
+        self.assertEqual(accounts[0].trade_password, "trade-pwd")
+        self.assertEqual(accounts[0].symbols, ["SHFE.au2510"])
+
+    def test_update_account_reencrypts_password(self):
+        self.service.save_account(_make_account())
+        self.service.save_account(_make_account(tq_password="new-pwd"))
+        accounts = self.service.load_accounts()
+        self.assertEqual(accounts[0].tq_password, "new-pwd")
+
+    def test_delete_account_removes_row(self):
+        self.service.save_account(_make_account())
+        self.service.delete_account("acc-1")
+        self.assertEqual(self.service.load_accounts(), [])
+        self.assertIsNone(self.service.get_account("acc-1"))
 
     def test_legacy_plaintext_db_loads_and_upgrades_on_save(self):
-        # 模拟历史明文数据：表结构不变，密码列直接存明文（无 enc:v1: 前缀）
+        # 模拟历史明文账户数据：accounts 表存在但密码列直接存明文（无 enc:v1: 前缀）
+        self.service.save_account(_make_account())
         conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            "INSERT INTO app_config (id, server_url, symbols, auto_trade, tq_account, tq_password,"
-            " trade_password, initial_balance, database)"
-            " VALUES (1, 'http://127.0.0.1:3080', '[\"SHFE.au2510\"]', 0, 'acc', 'plain-tq',"
-            " 'plain-trade', 1000000, ?)",
-            (str(self.db_path),),
-        )
+        conn.execute("UPDATE accounts SET tq_password = 'plain-tq', trade_password = 'plain-trade' WHERE id = 'acc-1'")
         conn.commit()
         conn.close()
 
         # 读取：旧明文直通
-        loaded = self.service.load()
-        self.assertEqual(loaded.tq_password, "plain-tq")
+        account = self.service.get_account("acc-1")
+        self.assertEqual(account.tq_password, "plain-tq")
         # 保存：升级为密文
-        self.service.save(loaded)
-        self.assertTrue(self._stored("tq_password").startswith("enc:v1:"))
-        self.assertEqual(self.service.load().tq_password, "plain-tq")
+        account.tq_password = "plain-tq"
+        self.service.save_account(account)
+        self.assertTrue(self._stored_account("tq_password", "acc-1").startswith("enc:v1:"))
+        self.assertEqual(self.service.get_account("acc-1").tq_password, "plain-tq")
 
-    def test_sim_columns_merged_into_tq_and_dropped(self):
-        # 历史库含 sim_account/sim_password 列：仅在模拟页填过（tq 为空）时搬迁进 tq 列，
-        # 随后 sim 列被 DROP
+    def test_legacy_app_config_migrates_to_accounts(self):
+        # 旧库：单账户凭据存在 app_config 单行里，accounts 表为空。
+        # 首次打开应迁移为 accounts 表一条记录，且密码同密钥密文直接搬入不重加密。
+        # load() 首次运行会写入默认配置行，先确保 app_config 有行可改
+        self.service.load()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            UPDATE app_config SET
+                tq_account = '13800000000', tq_password = 'enc:v1:old-cipher',
+                trade_account = '123456', trade_password = 'enc:v1:old-trade',
+                symbols = '["SHFE.au2510"]'
+            WHERE id = 1
+        """)
+        conn.commit()
+        conn.close()
+
+        # 迁移在构造时执行，需重新实例化触发
+        service = ConfigService(str(self.db_path))
+        accounts = service.load_accounts()
+        self.assertEqual(len(accounts), 1)
+        # 填了资金账号与交易密码即视为实盘
+        self.assertEqual(accounts[0].kind, "live")
+        self.assertEqual(accounts[0].tq_account, "13800000000")
+        self.assertEqual(accounts[0].trade_account, "123456")
+        self.assertEqual(accounts[0].symbols, ["SHFE.au2510"])
+
+        # 幂等：再次打开不重复迁移
+        self.assertEqual(len(ConfigService(str(self.db_path)).load_accounts()), 1)
+
+    def test_legacy_empty_app_config_does_not_migrate(self):
+        # 未配置任何账户的旧库不应生成迁移记录
+        self.assertEqual(self.service.load_accounts(), [])
+
+    def test_legacy_sim_columns_merged_then_account_migrated(self):
+        # 更老的历史库：账户凭据存在 sim_account/sim_password 列（tq 为空）。
+        # sim→tq 搬迁先执行（同密钥密文直接复制），随后 tq 凭据迁移进 accounts 表，
+        # sim 列被 DROP。
+        sim_pwd_cipher = self.service._cipher.encrypt("sim-pwd")
+        # load() 首次运行会写入默认配置行，先确保 app_config 有行可改
+        self.service.load()
         conn = sqlite3.connect(self.db_path)
         conn.execute("ALTER TABLE app_config ADD COLUMN sim_account TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE app_config ADD COLUMN sim_password TEXT NOT NULL DEFAULT ''")
         conn.execute(
-            "INSERT INTO app_config (id, server_url, symbols, auto_trade, tq_account, tq_password,"
-            " sim_account, sim_password, initial_balance, database)"
-            " VALUES (1, 'http://127.0.0.1:3080', '[\"SHFE.au2510\"]', 0, '', '',"
-            " '13800000000', 'sim-pwd', 1000000, ?)",
-            (str(self.db_path),),
+            "UPDATE app_config SET tq_account = '', sim_account = '13800000000',"
+            " sim_password = ? WHERE id = 1",
+            (sim_pwd_cipher,),
         )
         conn.commit()
         conn.close()
 
+        # 迁移在构造时执行，需重新实例化触发
         service = ConfigService(str(self.db_path))
-        columns = [
-            r[1] for r in sqlite3.connect(self.db_path).execute("PRAGMA table_info(app_config)")
-        ]
+        conn = sqlite3.connect(self.db_path)
+        try:
+            columns = [r[1] for r in conn.execute("PRAGMA table_info(app_config)")]
+        finally:
+            conn.close()
         self.assertNotIn("sim_account", columns)
         self.assertNotIn("sim_password", columns)
-        loaded = service.load()
-        self.assertEqual(loaded.tq_account, "13800000000")
-        self.assertEqual(loaded.tq_password, "sim-pwd")
 
-        # tq 列已有值时不覆盖，sim 值直接随 DROP 丢弃
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("ALTER TABLE app_config ADD COLUMN sim_account TEXT NOT NULL DEFAULT ''")
-        conn.execute("ALTER TABLE app_config ADD COLUMN sim_password TEXT NOT NULL DEFAULT ''")
-        conn.execute(
-            "UPDATE app_config SET sim_account = 'other', sim_password = 'other-pwd' WHERE id = 1"
-        )
-        conn.commit()
-        conn.close()
-        ConfigService(str(self.db_path))  # 触发迁移
-        reloaded = service.load()
-        self.assertEqual(reloaded.tq_account, "13800000000")
+        accounts = service.load_accounts()
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0].kind, "sim")
+        self.assertEqual(accounts[0].tq_account, "13800000000")
+        self.assertEqual(accounts[0].tq_password, "sim-pwd")
 
     def test_key_file_created_next_to_db(self):
-        self.service.save(_make_config(tq_password="pwd", database_path=str(self.db_path)))
+        self.service.save(_make_config(database_path=str(self.db_path)))
         self.assertTrue((Path(self._tmp.name) / ".secret.key").exists())
 
 

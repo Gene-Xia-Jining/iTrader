@@ -18,7 +18,7 @@ class MainWindowUiTest(unittest.TestCase):
         _make_app()
 
     def test_navigation_callbacks_and_log_state(self):
-        vm = MainViewModel(EventBus(), TradingConfiguration("http://localhost:8000", ["SHFE.au2510"], True, "acc", "pwd", 1000000))
+        vm = MainViewModel(EventBus(), TradingConfiguration("http://localhost:8000", True))
         calls = []
         window = MainWindow(
             vm=vm,
@@ -46,7 +46,7 @@ class MainWindowUiTest(unittest.TestCase):
 
     def test_head_auto_trade_button_follows_engine_state(self):
         bus = EventBus()
-        vm = MainViewModel(bus, TradingConfiguration("http://localhost:8000", ["SHFE.au2510"], True, "acc", "pwd", 1000000))
+        vm = MainViewModel(bus, TradingConfiguration("http://localhost:8000", True))
         calls = []
         window = MainWindow(
             vm=vm,

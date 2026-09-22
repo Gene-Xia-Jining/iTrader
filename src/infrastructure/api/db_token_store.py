@@ -1,6 +1,7 @@
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from ...domain.repositories import TokenStore
 from ..security.crypto import PasswordCipher, load_or_create_key
@@ -22,8 +23,16 @@ class DbTokenStore(TokenStore):
         self._init_table()
         self._migrate_legacy_file()
 
+    @contextmanager
+    def _conn(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_table(self):
-        with sqlite3.connect(self.db_path) as db:
+        with self._conn() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS api_token (
                     id INTEGER PRIMARY KEY DEFAULT 1,
@@ -52,7 +61,7 @@ class DbTokenStore(TokenStore):
         return bool(self.load_token())
 
     def load_token(self) -> Optional[str]:
-        with sqlite3.connect(self.db_path) as db:
+        with self._conn() as db:
             row = db.execute("SELECT token FROM api_token WHERE id = 1").fetchone()
         if row and row[0]:
             # 密钥丢失导致解密失败时视为无 token，走重新申请流程
@@ -60,7 +69,7 @@ class DbTokenStore(TokenStore):
         return None
 
     def save_token(self, token: str) -> None:
-        with sqlite3.connect(self.db_path) as db:
+        with self._conn() as db:
             db.execute(
                 "INSERT INTO api_token (id, token) VALUES (1, ?)"
                 " ON CONFLICT(id) DO UPDATE SET token = excluded.token",
@@ -69,6 +78,6 @@ class DbTokenStore(TokenStore):
             db.commit()
 
     def delete_token(self) -> None:
-        with sqlite3.connect(self.db_path) as db:
+        with self._conn() as db:
             db.execute("DELETE FROM api_token WHERE id = 1")
             db.commit()

@@ -27,16 +27,17 @@ class LogEvent:
 class StatusChangedEvent:
     trading_active: bool
     server_connected: bool
+    account_id: str = ""
 
 
 @dataclass
 class TradingStartedEvent:
-    pass
+    account_id: str = ""
 
 
 @dataclass
 class TradingStoppedEvent:
-    pass
+    account_id: str = ""
 
 
 @dataclass

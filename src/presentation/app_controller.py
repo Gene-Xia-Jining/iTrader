@@ -11,15 +11,12 @@ from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 from .. import __version__
 from ..application.bootstrap import Bootstrap
 from ..application.trading_engine import TradingEngine
-from ..domain.entities import TradingConfiguration
+from ..domain.entities import Account, TradingConfiguration
 from ..domain.events import ConfigChangedEvent, LogEvent, LogLevel
 from ..infrastructure.api.client import (
     check_server_health,
-    fetch_server_exchanges,
     fetch_server_symbols,
-    submit_server_symbol,
 )
-from ..infrastructure.config.broker_store import BrokerStore
 from ..infrastructure.proxy import apply_proxy_environment, server_host
 from ..infrastructure.trading.tqsdk_executor import test_tq_auth_connection
 from ..infrastructure.updater import (
@@ -33,6 +30,7 @@ from ..infrastructure.updater import (
     is_newer,
 )
 from .main_window import ConfigDialog, MainWindow
+from .pages import BROKER_GROUPS
 from .tray import TrayApp
 from .viewmodels import MainViewModel
 
@@ -44,8 +42,6 @@ class AppController(QObject):
     server_test_finished = Signal(str, bool)
     sim_test_finished = Signal(str, bool)
     symbols_fetched = Signal(bool, str, object)
-    exchanges_fetched = Signal(bool, str, object)
-    symbol_submitted = Signal(bool, str)
     auto_trade_rejected = Signal()
     # 自动更新：信号从 asyncio 线程回 UI 线程
     # update_check_finished 第二参为 True/False/None（成功/失败/进行中），
@@ -62,10 +58,10 @@ class AppController(QObject):
         self.qt_app = qt_app
         self.workdir = workdir
         self.bootstrap = Bootstrap(str(workdir / "data/client.db"))
-        self.broker_store = BrokerStore(str(workdir / "data/broker.json"))
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._engine: Optional[TradingEngine] = None
-        self._engine_task: Optional[asyncio.Task] = None
+        # 每个启用账户一个引擎，可同时运行
+        self._engines: dict[str, TradingEngine] = {}
+        self._engine_tasks: dict[str, asyncio.Task] = {}
         self._vm: Optional[MainViewModel] = None
         self._window: Optional[MainWindow] = None
         self._tray: Optional[TrayApp] = None
@@ -100,21 +96,15 @@ class AppController(QObject):
             on_test_simulation=self.handle_test_simulation,
             on_test_server=self.handle_test_server,
             on_fetch_symbols=self.handle_fetch_symbols,
-            on_fetch_exchanges=self.handle_fetch_exchanges,
-            on_submit_symbol=self.handle_submit_symbol,
             on_check_update=self.handle_check_update,
             on_cancel_update=self.handle_cancel_update,
         )
-        # 期货公司分组与选中项来自 broker.json
-        broker_data = self.broker_store.load()
-        self._window.account_page.set_brokers(
-            broker_data["groups"], broker_data["selected"]
-        )
+        self._window.account_page.on_delete = self._handle_delete_account
+        # 初始回填账户数据到实盘卡片与模拟表单
+        self._sync_accounts_to_ui()
         self.server_test_finished.connect(self._window.settings_page.server_test.set_result)
         self.sim_test_finished.connect(self._window.simulation_page.set_test_result)
-        self.symbols_fetched.connect(self._window.settings_page.set_symbols_result)
-        self.exchanges_fetched.connect(self._window.settings_page.set_exchanges_result)
-        self.symbol_submitted.connect(self._window.settings_page.set_symbol_submit_result)
+        self.symbols_fetched.connect(self._on_symbols_fetched)
         self.auto_trade_rejected.connect(self._window.show_server_not_connected)
         self.update_available.connect(self._on_update_available)
         self.update_check_finished.connect(self._window.settings_page.set_update_status)
@@ -184,8 +174,8 @@ class AppController(QObject):
             self._run_async(self._request_token(description))
 
     def _handle_toggle_auto_trade(self, value: bool):
-        if self._engine is not None:
-            self._engine.set_auto_trade(value)
+        for engine in self._engines.values():
+            engine.set_auto_trade(value)
         if self._vm is not None:
             self._vm.setAutoTrade(value)
 
@@ -193,14 +183,14 @@ class AppController(QObject):
         if value:
             # 开启前先探测服务器连通性，未连接则提示并取消切换
             self._toggle_rejected = False
-            self._run_async(self._start_engine_checked())
+            self._run_async(self._start_engines_checked())
             if self._window is not None and self._vm is not None:
                 self._show_blocking_toggle(
                     lambda: self._vm.tradingActive or self._toggle_rejected
                 )
         else:
             self._handle_toggle_auto_trade(False)
-            self._run_async(self._stop_engine())
+            self._run_async(self._stop_engines())
             if self._window is not None and self._vm is not None:
                 self._show_blocking_toggle(lambda: not self._vm.tradingActive)
 
@@ -261,28 +251,23 @@ class AppController(QObject):
             data = dlg.result_dict
             new_config = TradingConfiguration(
                 server_url=data["server_url"],
-                symbols=data["symbols"],
                 auto_trade=current_config.auto_trade,
-                tq_account=data["tq_account"],
-                tq_password=data["tq_password"],
-                trade_account=data["trade_account"],
-                trade_password=data["trade_password"],
                 proxy_url=current_config.proxy_url,
                 auto_check_update=current_config.auto_check_update,
                 skipped_version=current_config.skipped_version,
-                initial_balance=data["initial_balance"],
                 database_path=current_config.database_path,
             )
             self.bootstrap.save_config(new_config)
             self._vm.update_config(new_config)
             self.bootstrap.event_bus.publish(ConfigChangedEvent())
-            if self._engine is not None and self._engine.is_running:
+            if any(e.is_running for e in self._engines.values()):
                 self.bootstrap.event_bus.publish(
                     LogEvent(message="配置已更新（下次启动生效）", level=LogLevel.WARNING)
                 )
             else:
                 self.bootstrap.reset_engine()
-                self._engine = None
+                self._engines.clear()
+                self._engine_tasks.clear()
                 self.bootstrap.event_bus.publish(
                     LogEvent(message="配置已保存", level=LogLevel.INFO)
                 )
@@ -292,57 +277,77 @@ class AppController(QObject):
         self._apply_partial_config(data)
 
     def _handle_save_account(self, data: dict):
-        """保存来自交易账号页的配置：期货公司写 broker.json，其余写入 SQLite 配置。"""
-        broker = data.get("broker")
-        if broker:
-            self.broker_store.save_selected(broker)
-        self._apply_partial_config(data)
+        """保存来自交易账号页的实盘账户。期货公司随账户记录存储。"""
+        self._save_account(data, "live")
 
     def _handle_save_simulation(self, data: dict):
-        """保存来自模拟交易页的快期模拟账户配置。"""
-        self._apply_partial_config(data)
+        """保存来自模拟交易页的快期模拟账户。"""
+        self._save_account(data, "sim")
+
+    def _save_account(self, data: dict, kind: str) -> None:
+        """把表单数据存为一条账户记录。
+
+        UI 过渡期：未携带 account_id 时落到固定 id（sim→legacy、live→legacy-live），
+        与旧版单账户配置的迁移记录对齐，保证迁移后仍可编辑。
+        """
+        if self._vm is None:
+            return
+        symbols_raw = data.get("symbols")
+        if isinstance(symbols_raw, str):
+            symbols = [s.strip() for s in symbols_raw.split(",") if s.strip()]
+        elif isinstance(symbols_raw, list):
+            symbols = [str(s) for s in symbols_raw]
+        else:
+            symbols = None  # 未提供时沿用已有账户的品种
+
+        account_id = data.get("account_id") or ("legacy" if kind == "sim" else "legacy-live")
+        existing = self.bootstrap.config_service.get_account(account_id)
+        account = Account(
+            id=account_id,
+            kind=kind,
+            label=data.get("label") or (existing.label if existing else ("模拟账户" if kind == "sim" else "实盘账户")),
+            tq_account=data.get("tq_account") or (existing.tq_account if existing else ""),
+            tq_password=data.get("tq_password") or (existing.tq_password if existing else ""),
+            broker=data.get("broker") or (existing.broker if existing else ""),
+            trade_account=data.get("trade_account") or (existing.trade_account if existing else ""),
+            trade_password=data.get("trade_password") or (existing.trade_password if existing else ""),
+            symbols=symbols if symbols is not None else (list(existing.symbols) if existing else []),
+            enabled=data.get("enabled", existing.enabled if existing else True),
+        )
+        self.bootstrap.save_account(account)
+        self._on_accounts_changed()
+
+    def _on_accounts_changed(self) -> None:
+        """账户变更后的引擎与状态同步。"""
+        self._sync_accounts_to_ui()
+        self.bootstrap.event_bus.publish(ConfigChangedEvent())
+        if any(e.is_running for e in self._engines.values()):
+            self.bootstrap.event_bus.publish(
+                LogEvent(message="账户配置已更新（下次启动生效）", level=LogLevel.WARNING)
+            )
+        else:
+            self.bootstrap.reset_engine()
+            self._engines.clear()
+            self._engine_tasks.clear()
+            self.bootstrap.event_bus.publish(LogEvent(message="账户配置已保存", level=LogLevel.INFO))
 
     def _apply_partial_config(self, data: dict):
-        """以当前配置为基准，用 data 中的字段覆盖后保存。"""
+        """保存全局配置（与账户无关的项）。"""
         if self._vm is None:
             return
         current = self._vm.config
-        if "symbols" in data:
-            symbols = [s.strip() for s in data["symbols"].split(",") if s.strip()]
-        else:
-            symbols = list(current.symbols)
-        if "initial_balance" in data:
-            initial_balance = float(data["initial_balance"])
-        else:
-            initial_balance = current.initial_balance
         new_config = TradingConfiguration(
             server_url=data.get("server_url", current.server_url),
-            symbols=symbols,
             auto_trade=current.auto_trade,
-            tq_account=data.get("tq_account", current.tq_account),
-            tq_password=data.get("tq_password", current.tq_password),
-            trade_account=data.get("trade_account", current.trade_account),
-            trade_password=data.get("trade_password", current.trade_password),
             proxy_url=data.get("proxy_url", current.proxy_url),
             auto_check_update=data.get("auto_check_update", current.auto_check_update),
             skipped_version=data.get("skipped_version", current.skipped_version),
-            initial_balance=initial_balance,
             database_path=current.database_path,
         )
         self.bootstrap.save_config(new_config)
         self._vm.update_config(new_config)
         self._apply_proxy_env(new_config)
-        self.bootstrap.event_bus.publish(ConfigChangedEvent())
-        if self._engine is not None and self._engine.is_running:
-            self.bootstrap.event_bus.publish(
-                LogEvent(message="配置已更新（下次启动生效）", level=LogLevel.WARNING)
-            )
-        else:
-            self.bootstrap.reset_engine()
-            self._engine = None
-            self.bootstrap.event_bus.publish(
-                LogEvent(message="配置已保存", level=LogLevel.INFO)
-            )
+        self._on_accounts_changed()
 
     def _handle_clear_logs(self):
         if self._window is not None:
@@ -371,10 +376,15 @@ class AppController(QObject):
         else:
             self.server_test_finished.emit("连接成功", True)
 
-    def handle_fetch_symbols(self, server_url: str):
-        self._run_async(self._fetch_symbols(server_url))
+    def handle_fetch_symbols(self):
+        # 调用方（切页、刷新按钮）都不传地址，统一从配置取
+        self._run_async(self._fetch_symbols())
 
-    async def _fetch_symbols(self, server_url: str):
+    async def _fetch_symbols(self):
+        server_url = self.bootstrap.config.server_url
+        if not server_url:
+            self.symbols_fetched.emit(False, "未配置服务器地址", [])
+            return
         try:
             symbols = await fetch_server_symbols(
                 server_url, token_service=self.bootstrap.token_service
@@ -384,31 +394,28 @@ class AppController(QObject):
         else:
             self.symbols_fetched.emit(True, f"获取成功，共 {len(symbols)} 个品种", symbols)
 
-    def handle_fetch_exchanges(self, server_url: str):
-        self._run_async(self._fetch_exchanges(server_url))
-
-    async def _fetch_exchanges(self, server_url: str):
-        try:
-            exchanges = await fetch_server_exchanges(
-                server_url, token_service=self.bootstrap.token_service
-            )
-        except Exception as e:
-            self.exchanges_fetched.emit(False, f"{e}", [])
+    def _on_symbols_fetched(self, success: bool, message: str, symbols: list):
+        if not self._window:
+            return
+        if success:
+            self._window.simulation_page.on_symbols_fetched(symbols)
+            for card in self._window.account_page._cards.values():
+                card.symbols_picker.set_symbols(symbols, selected=card.symbols_picker.get_selected())
         else:
-            self.exchanges_fetched.emit(True, "", exchanges)
+            self._window.simulation_page.symbols_picker.set_fetch_error(message)
 
-    def handle_submit_symbol(self, server_url: str, symbol: str, exchange: str):
-        self._run_async(self._submit_symbol(server_url, symbol, exchange))
+    def _handle_delete_account(self, account_id: str):
+        self.bootstrap.delete_account(account_id)
+        self._on_accounts_changed()
 
-    async def _submit_symbol(self, server_url: str, symbol: str, exchange: str):
-        try:
-            await submit_server_symbol(
-                server_url, symbol, exchange, token_service=self.bootstrap.token_service
-            )
-        except Exception as e:
-            self.symbol_submitted.emit(False, f"添加失败: {e}")
-        else:
-            self.symbol_submitted.emit(True, f"品种 {symbol} 已添加到 {exchange}")
+    def _sync_accounts_to_ui(self):
+        if not self._window:
+            return
+        accounts = self.bootstrap.accounts
+        self._window.account_page.set_accounts(accounts)
+        sim = next((a for a in accounts if a.kind == "sim"), None)
+        self._window.simulation_page.set_account(sim)
+        self._window.sync_accounts_to_dashboard(accounts)
 
     def _handle_show_about(self):
         if self._window is not None:
@@ -424,18 +431,25 @@ class AppController(QObject):
             self._update_future.cancel()
 
     def handle_apply_update(self):
-        """确认重启后：退出流程中替换安装物并启动新进程。"""
+        """确认重启后：先停引擎释放连接，再替换安装物并启动新进程，最后退出。"""
         if self._staged_item is None:
             return
-        running = self._engine is not None and self._engine.is_running
+        running = any(e.is_running for e in self._engines.values())
         if running and self._window is not None and not self._window.ask_confirm_quit():
             return
-        try:
-            apply_update_and_restart(self._staged_item, self._update_kind)
-        except Exception as e:
-            self.update_failed.emit(f"安装更新失败: {e}")
-            return
-        self._run_async(self._shutdown())
+
+        async def _apply_and_quit():
+            # 先完全停止所有交易引擎并释放所有网络/数据库资源，消除新旧进程重叠并发
+            await self._stop_engines()
+            await self.bootstrap.shutdown()
+            try:
+                apply_update_and_restart(self._staged_item, self._update_kind)
+            except Exception as e:
+                self.update_failed.emit(f"安装更新失败: {e}")
+                return
+            await self._shutdown()
+
+        self._run_async(_apply_and_quit())
 
     async def _check_update(self, silent: bool):
         try:
@@ -546,7 +560,7 @@ class AppController(QObject):
         self._staged_item = None
 
     def _handle_quit(self):
-        running = self._engine is not None and self._engine.is_running
+        running = any(e.is_running for e in self._engines.values())
         if running and self._window is not None:
             if not self._window.ask_confirm_quit():
                 return
@@ -592,12 +606,12 @@ class AppController(QObject):
         async def _save():
             try:
                 token = await self.bootstrap.token_service.load_approved_token(data)
-                self.token_status_changed.emit(f"已通过，已保存到 {self.bootstrap.token_store.token_dir}" if token else "已通过，但服务器未返回 token")
+                self.token_status_changed.emit("已通过，token 已加密保存" if token else "已通过，但服务器未返回 token")
             except Exception as e:
                 self.token_status_changed.emit(f"保存 token 失败: {e}")
         self._run_async(_save())
 
-    async def _start_engine_checked(self):
+    async def _start_engines_checked(self):
         """开启自动交易前先探测服务器连通性，未连接则取消切换并提示。"""
         if self._vm is None:
             return
@@ -611,38 +625,56 @@ class AppController(QObject):
             self.auto_trade_rejected.emit()
             return
         self._handle_toggle_auto_trade(True)
-        await self._start_engine()
+        await self._start_engines()
 
-    async def _start_engine(self):
-        if self._engine is None:
-            self._engine = await self.bootstrap.build_engine()
-        if self._vm is not None:
-            self._engine.set_auto_trade(self._vm.autoTrade)
-        try:
-            self._engine_task = asyncio.create_task(self._engine.start())
+    def _enabled_account_ids(self) -> list[str]:
+        return [a.id for a in self.bootstrap.accounts if a.enabled]
+
+    async def _start_engines(self):
+        """启动全部已启用账户的引擎。单个账户失败不影响其余账户。"""
+        started = False
+        for account_id in self._enabled_account_ids():
+            if account_id in self._engines and self._engines[account_id].is_running:
+                continue
+            try:
+                engine = await self.bootstrap.build_engine(account_id)
+                if self._vm is not None:
+                    engine.set_auto_trade(self._vm.autoTrade)
+                self._engines[account_id] = engine
+                self._engine_tasks[account_id] = asyncio.create_task(engine.start())
+                started = True
+            except Exception as e:
+                self.bootstrap.event_bus.publish(
+                    LogEvent(
+                        message=f"启动账户 {account_id} 失败: {e}", level=LogLevel.ERROR
+                    )
+                )
+        if started:
             self.engine_started.emit()
-        except Exception as e:
-            self.bootstrap.event_bus.publish(
-                LogEvent(message=f"启动交易引擎失败: {e}", level=LogLevel.ERROR)
-            )
 
-    async def _stop_engine(self):
-        if self._engine is None:
-            return
-        try:
-            await self._engine.stop()
-            if self._engine_task is not None and not self._engine_task.done():
-                try:
-                    await asyncio.wait_for(self._engine_task, timeout=5)
-                except Exception:
-                    pass
-        except Exception as e:
-            self.bootstrap.event_bus.publish(
-                LogEvent(message=f"停止交易引擎失败: {e}", level=LogLevel.ERROR)
-            )
-        finally:
-            self._engine = None
-            self._engine_task = None
+    async def _stop_engines(self):
+        """停止全部账户引擎。执行器由 shutdown 统一关闭。"""
+        stopped = False
+        for account_id, engine in list(self._engines.items()):
+            try:
+                await engine.stop()
+                task = self._engine_tasks.get(account_id)
+                if task is not None and not task.done():
+                    try:
+                        await asyncio.wait_for(task, timeout=5)
+                    except Exception:
+                        pass
+                stopped = True
+            except Exception as e:
+                self.bootstrap.event_bus.publish(
+                    LogEvent(
+                        message=f"停止账户 {account_id} 失败: {e}", level=LogLevel.ERROR
+                    )
+                )
+            finally:
+                self._engines.pop(account_id, None)
+                self._engine_tasks.pop(account_id, None)
+        if stopped:
             self.engine_stopped.emit()
 
     @Slot()
@@ -650,7 +682,8 @@ class AppController(QObject):
         self.qt_app.quit()
 
     async def _shutdown(self):
-        await self._stop_engine()
+        await self._stop_engines()
+        await self.bootstrap.shutdown()
         if self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
         # _shutdown 运行在 asyncio 线程，QTimer.singleShot 的定时器没有事件循环可驱动，

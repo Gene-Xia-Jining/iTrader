@@ -33,11 +33,13 @@ class Bootstrap:
         self.event_bus = EventBus()
         self._config: Optional[TradingConfiguration] = None
         self._trade_repo: Optional[SQLiteTradeCommandRepository] = None
+        # 执行器单例：一个实例管理全部账户（每账户独立 TqApi 会话）
         self._trading_executor: Optional[TqSdkTradingExecutor] = None
-        self._stream_client: Optional[ServerStreamClient] = None
+        # 流客户端与引擎按账户各建一个：品种是账户属性，各自订阅自己的品种
+        self._stream_clients: dict[str, ServerStreamClient] = {}
+        self._engines: dict[str, TradingEngine] = {}
         self._token_store: Optional[DbTokenStore] = None
         self._token_service: Optional[TokenApiService] = None
-        self._engine: Optional[TradingEngine] = None
 
     @property
     def config(self) -> TradingConfiguration:
@@ -48,6 +50,16 @@ class Bootstrap:
     def save_config(self, config: TradingConfiguration) -> None:
         self._config = config
         self.config_service.save(config)
+
+    @property
+    def accounts(self) -> list:
+        return self.config_service.load_accounts()
+
+    def save_account(self, account) -> None:
+        self.config_service.save_account(account)
+
+    def delete_account(self, account_id: str) -> None:
+        self.config_service.delete_account(account_id)
 
     @property
     def token_store(self) -> DbTokenStore:
@@ -72,47 +84,64 @@ class Bootstrap:
         return self._trade_repo
 
     def build_trading_executor(self) -> TqSdkTradingExecutor:
-        if self._trading_executor is None:
-            from ..infrastructure.config.broker_store import BrokerStore
-            broker_store = BrokerStore(str(Path(self.db_path).parent / "broker.json"))
-            broker_data = broker_store.load()
-            broker = broker_data.get("selected", "")
+        """惰性创建执行器：每个账户独立 TqApi 会话，共享一个执行器实例。
 
+        账户记录（含 broker）来自 accounts 表，快期权限凭据来自每个账户的
+        tq_account/tq_password。
+        """
+        if self._trading_executor is None:
+            accounts = self.accounts
             self._trading_executor = TqSdkTradingExecutor(
-                account=self.config.tq_account,
-                password=self.config.tq_password,
-                trade_account=self.config.trade_account,
-                trade_password=self.config.trade_password,
-                broker=broker,
-                initial_balance=self.config.initial_balance,
+                accounts=accounts,
+                auths={a.id: (a.tq_account, a.tq_password) for a in accounts},
             )
         return self._trading_executor
 
-    def build_stream_client(self) -> ServerStreamClient:
-        if self._stream_client is None:
-            self._stream_client = ServerStreamClient(
+    def build_stream_client(self, account) -> ServerStreamClient:
+        """每个账户独立订阅：symbols 取账户自己的品种。"""
+        if account.id not in self._stream_clients:
+            self._stream_clients[account.id] = ServerStreamClient(
                 server_url=self.config.server_url,
-                symbols=self.config.symbols,
+                symbols=account.symbols,
                 token_service=self.token_service,
             )
-        return self._stream_client
+        return self._stream_clients[account.id]
 
-    async def build_engine(self) -> TradingEngine:
-        if self._engine is None:
+    async def build_engine(self, account_id: str) -> TradingEngine:
+        account = self.config_service.get_account(account_id)
+        if account is None:
+            raise ValueError(f"未知账户: {account_id}")
+        if account_id not in self._engines:
             trade_repo = await self.init_db()
-            self._engine = TradingEngine(
+            self._engines[account_id] = TradingEngine(
                 deps=TradingEngineDeps(
                     config=self.config,
+                    account_id=account_id,
                     trade_repo=trade_repo,
-                    stream_client=self.build_stream_client(),
+                    stream_client=self.build_stream_client(account),
                     trading_executor=self.build_trading_executor(),
                     event_bus=self.event_bus,
                     auto_trade=self.config.auto_trade,
                 )
             )
-        return self._engine
+        return self._engines[account_id]
+
+    async def stop_all(self) -> None:
+        """停止全部账户引擎。执行器由 shutdown 统一关闭。"""
+        for account_id, engine in list(self._engines.items()):
+            await engine.stop()
+
+    async def shutdown(self) -> None:
+        """释放全部资源：先停引擎再关执行器（释放 TqApi 连接）。"""
+        await self.stop_all()
+        if self._trading_executor is not None:
+            self._trading_executor.close()
+            self._trading_executor = None
 
     def reset_engine(self) -> None:
-        self._engine = None
-        self._trading_executor = None
-        self._stream_client = None
+        """配置变更后重置引擎与执行器，下次启动重建。"""
+        self._engines.clear()
+        self._stream_clients.clear()
+        if self._trading_executor is not None:
+            self._trading_executor.close()
+            self._trading_executor = None
