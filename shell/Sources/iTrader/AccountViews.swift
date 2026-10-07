@@ -74,6 +74,8 @@ private struct AccountFormView: View {
     @State private var tradePassword = ""
     @State private var enabled = true
     @State private var selectedSymbols: Set<String> = []
+    @State private var selectedSymbol = ""  // sim 单选
+    @State private var simManualSymbols: [String] = []  // sim 手动添加的品种
     @State private var manualSymbol = ""
     @State private var testResult = ""
     @State private var saveMessage = ""
@@ -171,7 +173,7 @@ private struct AccountFormView: View {
     private var symbolSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("订阅品种").font(.subheadline.weight(.medium))
+                Text("选择交易品种").font(.subheadline.weight(.medium))
                 Spacer()
                 Button("从服务器获取") { appState.fetchSymbols() }
                     .buttonStyle(.link)
@@ -181,10 +183,18 @@ private struct AccountFormView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if appState.serverSymbols.isEmpty {
+            if appState.serverSymbols.isEmpty && simManualSymbols.isEmpty {
                 Text("先在设置页配置服务器地址，获取品种列表后勾选；也可手动输入品种代码（如 SHFE.cu2501）")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+            } else if kind == "sim" {
+                // 模拟页：单选，对应 Qt 版 SimulationPage 的 SymbolPicker
+                symbolPicker
+                if !simManualSymbols.isEmpty {
+                    Text("已选：\(simManualSymbols.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 FlowGrid(items: appState.serverSymbols.sorted(), selected: $selectedSymbols)
             }
@@ -194,7 +204,7 @@ private struct AccountFormView: View {
                     .onSubmit(addManualSymbol)
                 Button("添加") { addManualSymbol() }
             }
-            if !selectedSymbols.isEmpty {
+            if kind == "live" && !selectedSymbols.isEmpty {
                 Text("已选 \(selectedSymbols.count) 个：\(selectedSymbols.sorted().joined(separator: ", "))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -203,11 +213,44 @@ private struct AccountFormView: View {
         .padding(.vertical, 4)
     }
 
+    /// 模拟页品种单选列表（服务器品种 + 手动添加合并展示），对应 Qt 版单选 radio
+    private var symbolPicker: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(simAllSymbols, id: \.self) { symbol in
+                RadioRow(symbol: symbol, isOn: Binding(
+                    get: { selectedSymbol == symbol },
+                    set: { isOn in
+                        if isOn { selectedSymbol = symbol }
+                        // 选中手动品种时确保它也在手动列表里
+                        if isOn && !simManualSymbols.contains(symbol) {
+                            simManualSymbols.append(symbol)
+                        }
+                    }
+                ))
+            }
+        }
+    }
+
+    /// 模拟页可选的品种集合：服务器品种在前，手动添加在后（不重复）
+    private var simAllSymbols: [String] {
+        var result = appState.serverSymbols
+        for s in simManualSymbols where !result.contains(s) {
+            result.append(s)
+        }
+        return result
+    }
+
     private func addManualSymbol() {
         let symbol = manualSymbol.trimmingCharacters(in: .whitespaces)
         guard !symbol.isEmpty else { return }
-        selectedSymbols.insert(symbol)
         manualSymbol = ""
+        if kind == "sim" {
+            // 单选：手动添加的品种直接选中；已在服务器列表则复用
+            if !simManualSymbols.contains(symbol) { simManualSymbols.append(symbol) }
+            selectedSymbol = symbol
+        } else {
+            selectedSymbols.insert(symbol)
+        }
     }
 
     private var actionButtons: some View {
@@ -234,6 +277,12 @@ private struct AccountFormView: View {
         tradeAccount = account.tradeAccount
         enabled = account.enabled
         selectedSymbols = Set(account.symbols)
+        if kind == "sim", let first = account.symbols.first {
+            selectedSymbol = first
+            if !appState.serverSymbols.contains(first) {
+                simManualSymbols = [first]
+            }
+        }
     }
 
     private func save() {
@@ -241,9 +290,16 @@ private struct AccountFormView: View {
             "kind": kind,
             "label": label,
             "tq_account": tqAccount,
-            "symbols": Array(selectedSymbols),
             "enabled": enabled,
         ]
+        if kind == "sim" {
+            // 模拟单选：取 selectedSymbol；若未选则不传 symbols（沿用已有）
+            if !selectedSymbol.isEmpty {
+                params["symbols"] = [selectedSymbol]
+            }
+        } else {
+            params["symbols"] = Array(selectedSymbols)
+        }
         if let account { params["account_id"] = account.id }
         if !tqPassword.isEmpty { params["tq_password"] = tqPassword }
         if kind == "live" {
@@ -256,6 +312,29 @@ private struct AccountFormView: View {
             saveMessage = "已保存（引擎运行中则下次启动生效）"
             if account == nil { expanded = false }
         }
+    }
+}
+
+// MARK: - 单选 Radio 按钮
+
+struct RadioRow: View {
+    let symbol: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            isOn = true
+        } label: {
+            HStack {
+                Image(systemName: isOn ? "largecircle.fill.circle" : "circle")
+                    .foregroundColor(isOn ? .blue : .secondary)
+                Text(symbol)
+                    .font(.callout)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
