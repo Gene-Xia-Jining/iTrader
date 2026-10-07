@@ -113,6 +113,7 @@ class AppController(QObject):
         self.update_failed.connect(self._on_update_failed)
         self.update_download_cancelled.connect(self._on_update_cancelled)
         self._setup_tray()
+        self._window.show()
         self._start_async_loop_on_thread()
         self._schedule_startup_update_check()
 

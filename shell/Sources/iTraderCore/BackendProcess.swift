@@ -10,14 +10,17 @@ public struct BackendInfo: Codable {
 
 /// 后端进程管理：定位启动命令、spawn、等待发现文件、健康检查、终止。
 ///
-/// 布局探测（两者取其一）：
-/// - bundle 态：Resources/backend_root.txt 内容为业务根目录路径（build_shell.sh 生成）；
-/// - 开发态：从本文件编译位置向上查找 src/backend/__main__.py 所在仓库根。
-/// 业务根目录须同时包含 .venv/bin/python 与 src/（与现有开发/打包布局一致）。
+/// 布局探测（按序取其一）：
+/// - 生产态：Bundle 内 Resources/backend/backend（build_app.sh 组装的 PyInstaller onedir 后端），
+///   工作目录为 ~/.iTrader（frozen 后端自行 chdir 到同一路径，data/ 与 app 位置无关）；
+/// - 开发态 bundle：Resources/backend_root.txt 内容为业务根目录路径（build_shell.sh 生成）；
+/// - 源码开发态：从本文件编译位置向上查找 src/backend/__main__.py 所在仓库根。
+///   后两种为 python 模式：.venv/bin/python -m src.backend，业务根须含 .venv 与 src/。
 public final class BackendProcess {
     public enum BackendError: LocalizedError, Sendable {
         case layoutNotFound
         case pythonMissing(String)
+        case backendMissing(String)
         case infoTimeout(String)
         case alreadyRunning
 
@@ -27,6 +30,8 @@ public final class BackendProcess {
                 return "未找到后端业务根目录（需要 .venv 与 src/backend）"
             case .pythonMissing(let path):
                 return "未找到 Python 解释器: \(path)"
+            case .backendMissing(let path):
+                return "未找到打包后端可执行文件: \(path)"
             case .infoTimeout(let path):
                 return "等待 \(path) 超时，后端可能启动失败"
             case .alreadyRunning:
@@ -35,24 +40,51 @@ public final class BackendProcess {
         }
     }
 
+    /// 启动方式：frozen = bundle 内 PyInstaller 后端；python = .venv 解释器（开发态）
+    private enum LaunchPlan {
+        case frozen(executable: URL, workdir: URL)
+        case python(repoRoot: URL)
+
+        var workdir: URL {
+            switch self {
+            case .frozen(_, let workdir): return workdir
+            case .python(let repoRoot): return repoRoot
+            }
+        }
+    }
+
     let repoRoot: URL
+    private let plan: LaunchPlan
     private let workdirOverride: URL?
     private var process: Process?
     private(set) var info: BackendInfo?
 
-    public var workdir: URL { workdirOverride ?? repoRoot }
+    public var workdir: URL { workdirOverride ?? plan.workdir }
     public var infoURL: URL { workdir.appendingPathComponent("data/backend.json") }
 
     /// 崩溃/退出回调（主线程外触发）
     public var onExit: (() -> Void)?
 
-    /// workdirOverride：测试用临时目录隔离 data/；生产环境用默认（= repoRoot）
+    /// workdirOverride：测试用临时目录隔离 data/；生产环境用默认
+    /// （python 模式 = 业务根，frozen 模式 = ~/.iTrader）
     public init(repoRootOverride: URL? = nil, workdirOverride: URL? = nil) throws {
-        self.repoRoot = try repoRootOverride ?? Self.detectRepoRoot()
         self.workdirOverride = workdirOverride
-        let python = Self.pythonURL(repoRoot: self.repoRoot)
-        guard FileManager.default.fileExists(atPath: python.path) else {
-            throw BackendError.pythonMissing(python.path)
+        if let override = repoRootOverride {
+            self.plan = .python(repoRoot: override)
+        } else {
+            self.plan = try Self.detectPlan()
+        }
+        self.repoRoot = plan.workdir
+        switch plan {
+        case .frozen(let executable, _):
+            guard FileManager.default.fileExists(atPath: executable.path) else {
+                throw BackendError.backendMissing(executable.path)
+            }
+        case .python(let root):
+            let python = Self.pythonURL(repoRoot: root)
+            guard FileManager.default.fileExists(atPath: python.path) else {
+                throw BackendError.pythonMissing(python.path)
+            }
         }
     }
 
@@ -70,12 +102,19 @@ public final class BackendProcess {
         try? FileManager.default.removeItem(at: infoURL)
 
         let proc = Process()
-        proc.executableURL = Self.pythonURL(repoRoot: repoRoot)
-        proc.arguments = ["-m", "src.backend"]
-        proc.currentDirectoryURL = workdir
-        var env = ProcessInfo.processInfo.environment
-        env["PYTHONPATH"] = repoRoot.path
-        proc.environment = env
+        switch plan {
+        case .frozen(let executable, _):
+            proc.executableURL = executable
+            proc.arguments = []
+            proc.currentDirectoryURL = workdir
+        case .python(let root):
+            proc.executableURL = Self.pythonURL(repoRoot: root)
+            proc.arguments = ["-m", "src.backend"]
+            proc.currentDirectoryURL = workdir
+            var env = ProcessInfo.processInfo.environment
+            env["PYTHONPATH"] = root.path
+            proc.environment = env
+        }
         // 后端日志默认丢弃（发现文件是主通道）；调 ITRADER_BACKEND_VERBOSE=1 时继承输出便于排障
         if ProcessInfo.processInfo.environment["ITRADER_BACKEND_VERBOSE"] == nil {
             proc.standardOutput = FileHandle.nullDevice
@@ -134,20 +173,28 @@ public final class BackendProcess {
         return repoRoot.appendingPathComponent(".venv/bin/python")
     }
 
-    private static func detectRepoRoot() throws -> URL {
-        // bundle 态：build_shell.sh 在 Resources 里放置业务根路径
+    private static func detectPlan() throws -> LaunchPlan {
+        // 生产态：build_app.sh 把 PyInstaller onedir 后端组装到 Resources/backend/
+        // （放 MacOS 会被 codesign 当代码树扫描而无法通过签名）
+        if let backend = Bundle.main.url(
+            forResource: "backend", withExtension: nil, subdirectory: "backend"
+        ), FileManager.default.fileExists(atPath: backend.path) {
+            let home = URL(fileURLWithPath: NSHomeDirectory())
+            return .frozen(executable: backend, workdir: home.appendingPathComponent(".iTrader"))
+        }
+        // 开发态 bundle：build_shell.sh 在 Resources 里放置业务根路径
         let marker = Bundle.main.url(forResource: "backend_root", withExtension: "txt")
         if let marker, let root = try? String(contentsOf: marker, encoding: .utf8) {
             let url = URL(fileURLWithPath: root.trimmingCharacters(in: .whitespacesAndNewlines))
             if FileManager.default.fileExists(atPath: url.appendingPathComponent("src/backend/__main__.py").path) {
-                return url
+                return .python(repoRoot: url)
             }
         }
-        // 开发态：从源码位置向上找
+        // 源码开发态：从源码位置向上找
         var dir = URL(fileURLWithPath: (#filePath as NSString).deletingLastPathComponent)
         for _ in 0..<8 {
             if FileManager.default.fileExists(atPath: dir.appendingPathComponent("src/backend/__main__.py").path) {
-                return dir
+                return .python(repoRoot: dir)
             }
             dir.deleteLastPathComponent()
         }

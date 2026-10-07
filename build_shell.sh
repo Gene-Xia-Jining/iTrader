@@ -3,7 +3,7 @@
 #
 # 开发态 bundle 直接复用仓库的 .venv 与 src/（Resources/backend_root.txt 指向仓库根），
 # 因此壳进程 spawn 的后端与 `python -m src.backend` 完全一致，data/ 共用仓库根。
-# 生产打包（backend PyInstaller 化 + runtime 内嵌）见后续阶段，本次不实现。
+# 生产打包（backend PyInstaller 化 + runtime 内嵌）见 build_app.sh。
 #
 # 用法: ./build_shell.sh [debug|release]   默认 release
 set -euo pipefail
