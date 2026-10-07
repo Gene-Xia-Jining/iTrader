@@ -24,6 +24,9 @@ struct iTraderApp: App {
         } label: {
             Image(systemName: "gauge.with.dots.needle.bottom.50percent")
                 .frame(width: 18, height: 18)
+                .onTapGesture {
+                    NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
+                }
         }
         .menuBarExtraStyle(.window)
     }
@@ -74,10 +77,6 @@ struct RootView: View {
 
     private var headBar: some View {
         HStack(spacing: 12) {
-            Text("iTrader 智能交易系统")
-                .font(AppTheme.titleFont)
-                .kerning(-0.4)
-                .foregroundColor(AppTheme.ink(scheme))
             Spacer()
             AppButton(
                 appState.engineStatus.tradingActive ? "自动交易：开" : "自动交易：关",
