@@ -1,13 +1,383 @@
 import SwiftUI
 
+/// 模拟交易页：快期模拟账户 4 步引导卡片（像素级对应 Qt SimulationPage）。
 struct SimulationView: View {
     @EnvironmentObject var appState: AppState
-    
+    @Environment(\.colorScheme) private var scheme
+
+    // 表单
+    @State private var phone = ""
+    @State private var password = ""
+    @State private var passwordVisible = false
+    // 品种单选（服务器品种 + 手动添加）
+    @State private var selectedSymbol = ""
+    @State private var simManualSymbols: [String] = []
+    @State private var manualSymbol = ""
+    // 测试连接进行中（按钮置灰）
+    @State private var testing = false
+    // 弹窗（对应 Qt QMessageBox）
+    @State private var alert: ActiveAlert?
+
     var body: some View {
-        VStack(spacing: 0) {
-            SimulationExplanationView()
-            Divider()
-            AccountView(kind: "sim")
+        PageContainer {
+            AppCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    guideLabel("在开始实盘交易之前，您应该通过 1-3 个月的模拟交易建立信心。\n\n我们支持快期的模拟交易，您需要：")
+                    guideLabel("1，下载快期模拟版客户端：")
+                    linkRow("手机端：", "https://www.shinnytech.com/products/app")
+                    // App Store 是手机端 iOS 渠道的子项，保留 Qt 版的 4 空格缩进
+                    linkRow("    App Store：", "https://itunes.apple.com/us/app/快期小q/id1187762307?l=zh&ls=1&mt=8")
+                    linkRow("Windows：", "https://www.shinnytech.com/products/q73")
+
+                    HairlineDivider()
+
+                    guideLabel("2，在快期客户端或天勤官网注册：")
+                    linkRow("天勤官网：", "https://account.shinnytech.com/")
+
+                    HairlineDivider()
+
+                    guideLabel("3，在这里填入：")
+                    inputRow
+
+                    HairlineDivider()
+
+                    guideLabel("4，选择交易品种：")
+                    symbolPicker
+                    manualAddRow
+                    hintLabel("提示：模拟帐户不支持组合/套利和期权交易，仅国内商品和股指国债。")
+                }
+                .padding(20)
+            }
         }
+        .onAppear(perform: fillFromAccount)
+        .onChange(of: appState.accounts) { _ in fillFromAccount() }
+        .alert(item: $alert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("好"))
+            )
+        }
+    }
+
+    // MARK: - 文本与链接
+
+    private func guideLabel(_ text: String) -> some View {
+        Text(text)
+            .font(AppTheme.bodyFont)
+            .kerning(-0.1)
+            .foregroundColor(AppTheme.ink(scheme))
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+
+    private func hintLabel(_ text: String) -> some View {
+        Text(text)
+            .font(AppTheme.dimFont)
+            .foregroundColor(AppTheme.dim(scheme))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// 链接行：13px 灰前缀 + #007aff 下划线链接（点击打开浏览器）
+    private func linkRow(_ prefix: String, _ urlString: String) -> some View {
+        var prefixAttr = AttributedString(prefix)
+        prefixAttr.font = Font.system(size: 13)
+        prefixAttr.foregroundColor = AppTheme.dim(scheme)
+        var linkAttr = AttributedString(urlString)
+        linkAttr.font = Font.system(size: 13)
+        linkAttr.link = URL(string: urlString)
+        linkAttr.foregroundColor = AppTheme.link
+        linkAttr.underlineStyle = .single
+        return Text(prefixAttr + linkAttr)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+
+    // MARK: - 输入行（手机号 / 密码 / 眼睛 / 保存 / 测试连接）
+
+    private var inputRow: some View {
+        HStack(spacing: 8) {
+            Text("手机号：")
+                .font(AppTheme.bodyFont)
+                .foregroundColor(AppTheme.ink(scheme))
+            AppTextField(placeholder: "手机号", text: $phone)
+            Text("密码：")
+                .font(AppTheme.bodyFont)
+                .foregroundColor(AppTheme.ink(scheme))
+            passwordField
+            eyeButton
+            AppButton("保存", variant: .secondary, size: .inline) { save() }
+            AppButton(testing ? "测试中..." : "测试连接", variant: .secondary, size: .inline, disabled: testing) {
+                testConnection()
+            }
+        }
+    }
+
+    private var passwordField: some View {
+        HStack(spacing: 0) {
+            if passwordVisible {
+                TextField("密码", text: $password)
+                    .textFieldStyle(.plain)
+                    .font(AppTheme.bodyFont)
+            } else {
+                SecureField("密码", text: $password)
+                    .textFieldStyle(.plain)
+                    .font(AppTheme.bodyFont)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: 36)
+        .background(AppTheme.inputBg(scheme))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppTheme.hairline(scheme), lineWidth: 1)
+        )
+    }
+
+    /// 眼睛图标按钮：图标表示点击后的效果（隐藏时睁眼=查看，明文时闭眼=隐藏）
+    private var eyeButton: some View {
+        Button {
+            passwordVisible.toggle()
+        } label: {
+            Image(systemName: passwordVisible ? "eye.slash" : "eye")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 16, height: 16)
+                .foregroundColor(AppTheme.link)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .buttonStyle(.plain)
+        .frame(minWidth: 40, maxWidth: 40, minHeight: 36)
+        .background(AppTheme.inputBg(scheme))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppTheme.hairline(scheme), lineWidth: 1)
+        )
+        .pointerCursor()
+    }
+
+    // MARK: - 品种区（单选 radio + 刷新按钮，对应 Qt SymbolPicker）
+
+    private var symbolPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], alignment: .leading, spacing: 10) {
+                    ForEach(simAllSymbols, id: \.self) { symbol in
+                        RadioRow(symbol: symbol, isOn: Binding(
+                            get: { selectedSymbol == symbol },
+                            set: { isOn in
+                                if isOn { selectedSymbol = symbol }
+                                if isOn && !simManualSymbols.contains(symbol) {
+                                    simManualSymbols.append(symbol)
+                                }
+                            }
+                        ))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                AppButton("刷新", variant: .secondary) { appState.fetchSymbols() }
+            }
+            Text(pickerHint)
+                .font(AppTheme.dimFont)
+                .foregroundColor(AppTheme.dim(scheme))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// 手动添加品种（SwiftUI 版保留的能力：获取失败时仍可选择品种）
+    private var manualAddRow: some View {
+        HStack(spacing: 8) {
+            TextField("手动添加品种（如 SHFE.cu2501）", text: $manualSymbol)
+                .textFieldStyle(.plain)
+                .font(AppTheme.dimFont)
+                .padding(.horizontal, 12)
+                .frame(width: 320, height: 30)
+                .background(AppTheme.inputBg(scheme))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(AppTheme.hairline(scheme), lineWidth: 1)
+                )
+                .onSubmit(addManualSymbol)
+            AppButton("添加", variant: .secondary, size: .inline) { addManualSymbol() }
+        }
+    }
+
+    /// 模拟页可选品种：服务器品种在前，手动添加在后（不重复）
+    private var simAllSymbols: [String] {
+        var result = appState.serverSymbols
+        for s in simManualSymbols where !result.contains(s) {
+            result.append(s)
+        }
+        return result
+    }
+
+    /// 品种区状态行（对应 Qt SymbolPicker 的 _hint 文案规则）
+    private var pickerHint: String {
+        if appState.symbolsFetching { return "正在获取品种..." }
+        if appState.symbolsMessage.hasPrefix("获取失败") {
+            return "获取品种失败: \(appState.symbolsMessage)"
+        }
+        if !appState.serverSymbols.isEmpty {
+            return "共 \(appState.serverSymbols.count) 个品种，选择一个订阅，保存后生效"
+        }
+        return "尚未获取品种"
+    }
+
+    private func addManualSymbol() {
+        let symbol = manualSymbol.trimmingCharacters(in: .whitespaces)
+        guard !symbol.isEmpty else { return }
+        manualSymbol = ""
+        if !simManualSymbols.contains(symbol) { simManualSymbols.append(symbol) }
+        selectedSymbol = symbol
+    }
+
+    // MARK: - 数据与动作
+
+    /// 用已存模拟账户回填（后端不回传密码，密码留空 = 沿用旧值）；
+    /// 仅在手机号为空时填充，避免覆盖用户正在编辑的内容
+    private func fillFromAccount() {
+        guard phone.isEmpty,
+              let sim = appState.accounts.first(where: { $0.kind == "sim" }) else { return }
+        phone = sim.tqAccount
+        if let first = sim.symbols.first {
+            selectedSymbol = first
+            if !appState.serverSymbols.contains(first) && simManualSymbols.isEmpty {
+                simManualSymbols = [first]
+            }
+        }
+    }
+
+    private var hasOptions: Bool {
+        !appState.serverSymbols.isEmpty || !simManualSymbols.isEmpty
+    }
+
+    private func save() {
+        let account = phone.trimmingCharacters(in: .whitespaces)
+        guard !account.isEmpty else {
+            alert = .inputError("手机号不能为空")
+            return
+        }
+        // 新账户必须设置密码；已存账户留空沿用旧密码（后端约定）
+        let isNew = !appState.accounts.contains { $0.kind == "sim" }
+        guard !password.isEmpty || !isNew else {
+            alert = .inputError("密码不能为空")
+            return
+        }
+        if hasOptions && selectedSymbol.isEmpty {
+            alert = .inputError("请选择一个交易品种")
+            return
+        }
+
+        var params: [String: Any] = [
+            "kind": "sim",
+            "label": "模拟账户",
+            "tq_account": account,
+        ]
+        if let sim = appState.accounts.first(where: { $0.kind == "sim" }) {
+            params["account_id"] = sim.id
+        }
+        if !password.isEmpty { params["tq_password"] = password }
+        if hasOptions && !selectedSymbol.isEmpty {
+            params["symbols"] = [selectedSymbol]
+        }
+
+        Task {
+            await appState.runAction(method: "accounts.save", params: params)
+            alert = appState.lastActionError.isEmpty
+                ? .saveSuccess
+                : .inputError(appState.lastActionError)
+        }
+    }
+
+    private func testConnection() {
+        let account = phone.trimmingCharacters(in: .whitespaces)
+        guard !account.isEmpty else {
+            alert = .inputError("手机号不能为空")
+            return
+        }
+        guard !password.isEmpty else {
+            alert = .inputError("密码不能为空")
+            return
+        }
+        testing = true
+        Task {
+            let message = await appState.testTqAuth(account: account, password: password)
+            testing = false
+            alert = .testResult(message: message)
+        }
+    }
+}
+
+// MARK: - 弹窗（对应 Qt QMessageBox）
+
+enum ActiveAlert: Identifiable {
+    case inputError(String)
+    case saveSuccess
+    case testResult(message: String)
+    case configSaved
+    case accountSaved
+
+    var id: String {
+        switch self {
+        case .inputError(let msg): return "error-\(msg)"
+        case .saveSuccess: return "saved"
+        case .testResult(let msg): return "test-\(msg)"
+        case .configSaved: return "config-saved"
+        case .accountSaved: return "account-saved"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .inputError: return "输入错误"
+        case .saveSuccess: return "保存成功"
+        case .testResult: return "测试连接"
+        case .configSaved, .accountSaved: return "保存成功"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .inputError(let msg): return msg
+        case .saveSuccess: return "模拟交易账户配置已保存"
+        case .testResult(let msg): return msg
+        case .configSaved: return "配置已保存并生效"
+        case .accountSaved: return "实盘账户已保存"
+        }
+    }
+}
+
+// MARK: - 单选 radio 行
+
+struct RadioRow: View {
+    let symbol: String
+    @Binding var isOn: Bool
+    /// true 时行尾 Spacer 撑满（网格单元整行可点）；false 时仅内容宽（同一行多个 radio 依次排列）
+    var expanding = true
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Button {
+            isOn = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isOn ? "largecircle.fill.circle" : "circle")
+                    .foregroundColor(isOn ? AppTheme.primary(scheme) : AppTheme.dim(scheme))
+                Text(symbol)
+                    .font(AppTheme.bodyFont)
+                    .foregroundColor(AppTheme.ink(scheme))
+                    .lineLimit(1)
+                if expanding {
+                    Spacer(minLength: 0)
+                }
+            }
+            .frame(minHeight: 30)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
     }
 }

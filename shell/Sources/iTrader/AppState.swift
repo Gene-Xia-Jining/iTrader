@@ -11,17 +11,18 @@ struct LogLine: Identifiable {
     let level: String
     let message: String
 
-    var color: Color {
+    /// 日志配色随主题（对应 Qt viewmodels 的 log_colors）
+    func color(for scheme: ColorScheme) -> Color {
         switch level {
-        case "ERROR": return .red
-        case "WARNING": return .orange
-        case "SUCCESS": return .green
-        default: return .primary
+        case "ERROR": return scheme == .dark ? Color(hex: 0xFF453A) : Color(hex: 0xC5241F)
+        case "WARNING": return scheme == .dark ? Color(hex: 0xFFD60A) : Color(hex: 0xB8780A)
+        case "SUCCESS": return scheme == .dark ? Color(hex: 0x30D158) : Color(hex: 0x1D9552)
+        default: return scheme == .dark ? .white : Color(hex: 0x1D1D1F)
         }
     }
 }
 
-struct AccountInfo: Identifiable {
+struct AccountInfo: Identifiable, Equatable {
     let id: String
     let kind: String
     let label: String
@@ -75,7 +76,7 @@ struct EngineStatus {
     }
 }
 
-struct ConfigInfo {
+struct ConfigInfo: Equatable {
     var serverUrl = ""
     var proxyUrl = ""
     var autoCheckUpdate = true
@@ -118,6 +119,7 @@ final class AppState: ObservableObject {
     @Published var config = ConfigInfo()
     @Published var serverSymbols: [String] = []
     @Published var symbolsMessage = ""
+    @Published var symbolsFetching = false
     @Published var tokenStatus = ""
     @Published var updatePhase = UpdatePhase.idle
     @Published var lastActionError = ""
@@ -309,15 +311,19 @@ final class AppState: ObservableObject {
         }
     }
 
-    func saveConfig(serverUrl: String?, proxyUrl: String?) {
+    func saveConfig(serverUrl: String?, proxyUrl: String?, autoCheckUpdate: Bool? = nil) {
         var params: [String: Any] = [:]
         if let serverUrl { params["server_url"] = serverUrl }
         if let proxyUrl { params["proxy_url"] = proxyUrl }
+        if let autoCheckUpdate { params["auto_check_update"] = autoCheckUpdate }
         Task { await runAction(method: "config.save", params: params) }
     }
 
     func fetchSymbols() {
+        guard !symbolsFetching else { return }
+        symbolsFetching = true
         Task {
+            defer { symbolsFetching = false }
             do {
                 lastActionError = ""
                 let resp = try await call(method: "symbols.fetch")

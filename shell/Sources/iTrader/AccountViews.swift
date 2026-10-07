@@ -6,357 +6,298 @@ let BROKER_GROUPS: [(group: String, brokers: [String])] = [
     ("天勤专业版", ["东方汇金", "光大期货", "国泰君安"]),
 ]
 
+/// 实盘交易页：账户卡片列表（像素级对应 Qt AccountPage）。
+/// 每张卡片持有独立的期货公司单选（跨账户不互斥），支持多个实盘账户并存。
 struct AccountView: View {
-    let kind: String
     @EnvironmentObject var appState: AppState
-    @State private var addingNew = false
+    @Environment(\.colorScheme) private var scheme
+    /// 新建未保存卡片的 id（前端生成，对应 Qt live-{uuid4.hex[:8]}，保存时传给后端）
+    @State private var draftIDs: [String] = []
 
-    private var kindAccounts: [AccountInfo] {
-        appState.accounts.filter { $0.kind == kind }
+    private var savedAccounts: [AccountInfo] {
+        appState.accounts.filter { $0.kind == "live" }
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if kind == "sim" {
-                    // 快期模拟账户全局仅一个
-                    if let sim = kindAccounts.first {
-                        AccountCard(account: sim)
-                    } else {
-                        AccountCard(account: nil)
-                    }
-                } else {
-                    ForEach(kindAccounts) { account in
-                        AccountCard(account: account)
-                    }
-                    if addingNew {
-                        AccountCard(account: nil)
-                    } else {
-                        Button {
-                            addingNew = true
-                        } label: {
-                            Label("新增实盘账户", systemImage: "plus")
+        PageContainer {
+            PageHeader(
+                title: "实盘交易",
+                subtitle: "添加多个实盘账户，每个账户独立选择期货公司与品种，保存后即时生效。"
+            )
+            AppCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    AppButton("＋ 添加实盘账户", variant: .secondary) { addDraft() }
+                    brokerHint
+                    // 已保存账户卡在前，新建草稿卡在后（对应 Qt set_accounts + _on_add_clicked）
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(savedAccounts) { account in
+                            AccountCardForm(accountID: account.id, account: account)
                         }
-                        .buttonStyle(.borderless)
-                        .opacity(kindAccounts.isEmpty ? 1 : 0.8)
+                        ForEach(draftIDs, id: \.self) { id in
+                            AccountCardForm(accountID: id, account: nil, onDismissed: {
+                                draftIDs.removeAll { $0 == id }
+                            })
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(20)
             }
-            .padding(20)
         }
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
+    }
+
+    private func addDraft() {
+        draftIDs.append("live-" + UUID().uuidString.prefix(8).lowercased())
+    }
+
+    /// 期货公司支持范围说明（带 tqsdk-brokers 外链）
+    private var brokerHint: some View {
+        var prefix = AttributedString("期货公司按天勤版本分组，各账户可独立选择；受限于 TqSdk，支持范围参见：")
+        prefix.font = AppTheme.dimFont
+        prefix.foregroundColor = AppTheme.dim(scheme)
+        var link = AttributedString("tqsdk-brokers")
+        link.font = AppTheme.dimFont
+        link.link = URL(string: "https://www.shinnytech.com/articles/reference/tqsdk-brokers")
+        link.foregroundColor = AppTheme.link
+        link.underlineStyle = .single
+        return Text(prefix + link)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
-/// 单个账户卡片：nil = 新建表单
-private struct AccountCard: View {
+// MARK: - 单个实盘账户卡片（对应 Qt _AccountCard；account 为 nil 时是新建表单）
+
+private struct AccountCardForm: View {
+    let accountID: String
     let account: AccountInfo?
+    /// 新建卡保存成功 / 未保存卡删除后从草稿列表移除
+    var onDismissed: (() -> Void)? = nil
+
     @EnvironmentObject var appState: AppState
-
-    var body: some View {
-        AccountFormView(kind: account?.kind ?? "live", account: account)
-    }
-}
-
-// MARK: - 账户表单
-
-private struct AccountFormView: View {
-    let kind: String
-    let account: AccountInfo?
-    @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
 
     @State private var label = ""
-    @State private var tqAccount = ""
-    @State private var tqPassword = ""
     @State private var broker = ""
     @State private var tradeAccount = ""
     @State private var tradePassword = ""
+    @State private var tqAccount = ""
+    @State private var tqPassword = ""
     @State private var enabled = true
-    @State private var selectedSymbols: Set<String> = []
-    @State private var selectedSymbol = ""  // sim 单选
-    @State private var simManualSymbols: [String] = []  // sim 手动添加的品种
-    @State private var manualSymbol = ""
-    @State private var testResult = ""
-    @State private var saveMessage = ""
-    @State private var expanded = false
+    @State private var selectedSymbol = ""
+    @State private var alert: ActiveAlert?
 
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                header
-                if expanded || account == nil {
-                    fields
-                    symbolSection
-                    actionButtons
-                }
-                if !testResult.isEmpty {
-                    Text(testResult)
-                        .font(.caption)
-                        .foregroundStyle(testResult.contains("成功") ? .green : .red)
-                }
-                if !saveMessage.isEmpty {
-                    Text(saveMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(6)
-        } label: {
-            Label(title, systemImage: kind == "sim" ? "testtube.2" : "banknote")
-        }
-        .onAppear(perform: fillFromAccount)
-    }
-
-    private var title: String {
-        if let account {
-            return "\(account.label)（\(account.id)）"
-        }
-        return kind == "sim" ? "快期模拟账户（尚未配置）" : "新实盘账户"
-    }
-
-    private var header: some View {
-        HStack {
-            Text(title).font(.headline)
-            if let account {
-                Spacer()
-                Toggle("启用", isOn: $enabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                Button(expanded ? "收起" : "编辑") { expanded.toggle() }
-                    .buttonStyle(.link)
-            }
-        }
-    }
-
-    private var fields: some View {
-        Form {
-            TextField("显示名称", text: $label, prompt: Text(kind == "sim" ? "模拟账户" : "实盘账户"))
-            TextField("快期账户（TqAuth）", text: $tqAccount, prompt: Text("快期账号/手机号"))
-            SecureField("快期密码", text: $tqPassword, prompt: Text(account == nil ? "必填" : "留空 = 不修改"))
-
-            if kind == "live" {
-                Picker("期货公司", selection: $broker) {
-                    Text("未选择").tag("")
-                    ForEach(BROKER_GROUPS, id: \.group) { group in
-                        Section(group.group) {
-                            ForEach(group.brokers, id: \.self) { name in
-                                Text(name).tag(name)
-                            }
-                        }
-                    }
-                }
-                TextField("资金账号", text: $tradeAccount)
-                SecureField("交易密码", text: $tradePassword, prompt: Text(account == nil ? "必填" : "留空 = 不修改"))
-            }
-
-            HStack {
-                Button("测试快期账户") {
-                    Task {
-                        testResult = "测试中…"
-                        testResult = await appState.testTqAuth(account: tqAccount, password: tqPassword)
-                    }
-                }
-                .disabled(tqAccount.isEmpty || tqPassword.isEmpty)
-                Button("测试服务器") {
-                    Task {
-                        testResult = "测试中…"
-                        testResult = await appState.testServer(url: nil)
-                    }
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var symbolSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("选择交易品种").font(.subheadline.weight(.medium))
-                Spacer()
-                Button("从服务器获取") { appState.fetchSymbols() }
-                    .buttonStyle(.link)
-            }
-            if !appState.symbolsMessage.isEmpty {
-                Text(appState.symbolsMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if appState.serverSymbols.isEmpty && simManualSymbols.isEmpty {
-                Text("先在设置页配置服务器地址，获取品种列表后勾选；也可手动输入品种代码（如 SHFE.cu2501）")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            } else if kind == "sim" {
-                // 模拟页：单选，对应 Qt 版 SimulationPage 的 SymbolPicker
+        AppCard {
+            VStack(alignment: .leading, spacing: 10) {
+                headRow
+                brokerRows
+                dimLabel("资金账号:")
+                AppTextField(placeholder: "资金账号 (实盘必填)", text: $tradeAccount)
+                dimLabel("交易密码:")
+                AppTextField(placeholder: "交易密码 (实盘必填)", secure: true, text: $tradePassword)
+                dimLabel("快期账号:")
+                AppTextField(placeholder: "快期账号", text: $tqAccount)
+                dimLabel("快期密码:")
+                AppTextField(placeholder: "快期密码", secure: true, text: $tqPassword)
+                dimLabel("交易品种:")
                 symbolPicker
-                if !simManualSymbols.isEmpty {
-                    Text("已选：\(simManualSymbols.joined(separator: ", "))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    AppButton("保存") { save() }
                 }
-            } else {
-                FlowGrid(items: appState.serverSymbols.sorted(), selected: $selectedSymbols)
             }
-            HStack {
-                TextField("手动添加品种", text: $manualSymbol)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(addManualSymbol)
-                Button("添加") { addManualSymbol() }
-            }
-            if kind == "live" && !selectedSymbols.isEmpty {
-                Text("已选 \(selectedSymbols.count) 个：\(selectedSymbols.sorted().joined(separator: ", "))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
         }
-        .padding(.vertical, 4)
+        .onAppear(perform: fill)
+        .onChange(of: account) { _ in fill() }
+        .alert(item: $alert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("好"))
+            )
+        }
     }
 
-    /// 模拟页品种单选列表（服务器品种 + 手动添加合并展示），对应 Qt 版单选 radio
-    private var symbolPicker: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 6)], alignment: .leading, spacing: 6) {
-            ForEach(simAllSymbols, id: \.self) { symbol in
-                RadioRow(symbol: symbol, isOn: Binding(
-                    get: { selectedSymbol == symbol },
-                    set: { isOn in
-                        if isOn { selectedSymbol = symbol }
-                        // 选中手动品种时确保它也在手动列表里
-                        if isOn && !simManualSymbols.contains(symbol) {
-                            simManualSymbols.append(symbol)
-                        }
+    // MARK: 标题行（账户名称输入框 + 启用开关 + 删除）
+
+    private var headRow: some View {
+        HStack(spacing: 10) {
+            AppTextField(placeholder: "账户名称（如：光大-主力）", text: $label)
+            enabledCheck
+            AppButton("删除", variant: .danger) { delete() }
+        }
+    }
+
+    /// 启用 checkbox（对应 Qt QCheckBox：macOS 原生渲染，spacing 10、行高 30）
+    private var enabledCheck: some View {
+        Button { enabled.toggle() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: enabled ? "checkmark.square.fill" : "square")
+                    .foregroundColor(enabled ? AppTheme.primary(scheme) : AppTheme.dim(scheme))
+                Text("启用")
+                    .font(AppTheme.bodyFont)
+                    .foregroundColor(AppTheme.ink(scheme))
+            }
+            .frame(minHeight: 30)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+    }
+
+    // MARK: 期货公司单选（每卡片独立一组，按天勤版本分行）
+
+    private var brokerRows: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(BROKER_GROUPS, id: \.group) { group in
+                HStack(spacing: 10) {
+                    Text("\(group.group):")
+                        .font(AppTheme.dimFont)
+                        .foregroundColor(AppTheme.dim(scheme))
+                    ForEach(group.brokers, id: \.self) { name in
+                        RadioRow(
+                            symbol: name,
+                            isOn: Binding(
+                                get: { broker == name },
+                                set: { if $0 { broker = name } }
+                            ),
+                            expanding: false
+                        )
                     }
-                ))
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
 
-    /// 模拟页可选的品种集合：服务器品种在前，手动添加在后（不重复）
-    private var simAllSymbols: [String] {
+    // MARK: 品种单选（与模拟页共用服务器品种列表，卡片内不带刷新按钮）
+
+    private var symbolPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], alignment: .leading, spacing: 10) {
+                ForEach(allSymbols, id: \.self) { symbol in
+                    RadioRow(
+                        symbol: symbol,
+                        isOn: Binding(
+                            get: { selectedSymbol == symbol },
+                            set: { if $0 { selectedSymbol = symbol } }
+                        )
+                    )
+                }
+            }
+            Text(pickerHint)
+                .font(AppTheme.dimFont)
+                .foregroundColor(AppTheme.dim(scheme))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// 已选但服务器未返回的品种保留显示（对应 Qt set_symbols 的 merge 规则）
+    private var allSymbols: [String] {
         var result = appState.serverSymbols
-        for s in simManualSymbols where !result.contains(s) {
-            result.append(s)
+        if !selectedSymbol.isEmpty && !result.contains(selectedSymbol) {
+            result.append(selectedSymbol)
         }
         return result
     }
 
-    private func addManualSymbol() {
-        let symbol = manualSymbol.trimmingCharacters(in: .whitespaces)
-        guard !symbol.isEmpty else { return }
-        manualSymbol = ""
-        if kind == "sim" {
-            // 单选：手动添加的品种直接选中；已在服务器列表则复用
-            if !simManualSymbols.contains(symbol) { simManualSymbols.append(symbol) }
-            selectedSymbol = symbol
-        } else {
-            selectedSymbols.insert(symbol)
+    /// 对应 Qt SymbolPicker 的 hint 文案规则
+    private var pickerHint: String {
+        if appState.symbolsFetching { return "正在获取品种..." }
+        if appState.symbolsMessage.hasPrefix("获取失败") {
+            return "获取品种失败: \(appState.symbolsMessage)"
         }
+        let merged = allSymbols
+        if !merged.isEmpty {
+            return "共 \(merged.count) 个品种，选择一个订阅，保存后生效"
+        }
+        return "服务器暂无可订阅品种"
     }
 
-    private var actionButtons: some View {
-        HStack {
-            Button("保存") { save() }
-                .buttonStyle(.borderedProminent)
-            if let account {
-                Button("删除账户", role: .destructive) {
-                    Task {
-                        await appState.runAction(method: "accounts.delete", params: ["account_id": account.id])
-                        saveMessage = "已删除"
-                    }
-                }
-            }
-            Spacer()
-        }
+    private var hasOptions: Bool { !allSymbols.isEmpty }
+
+    private func dimLabel(_ text: String) -> some View {
+        Text(text)
+            .font(AppTheme.dimFont)
+            .foregroundColor(AppTheme.dim(scheme))
     }
 
-    private func fillFromAccount() {
-        guard let account else { return }
-        label = account.label
-        tqAccount = account.tqAccount
-        broker = account.broker
-        tradeAccount = account.tradeAccount
-        enabled = account.enabled
-        selectedSymbols = Set(account.symbols)
-        if kind == "sim", let first = account.symbols.first {
-            selectedSymbol = first
-            if !appState.serverSymbols.contains(first) {
-                simManualSymbols = [first]
-            }
+    // MARK: - 动作
+
+    /// 用账户记录回填表单（对应 Qt fill；后端不回传密码，密码框保持留空 = 沿用旧值）
+    private func fill() {
+        let names = BROKER_GROUPS.flatMap(\.brokers)
+        if let account {
+            label = account.label
+            broker = names.contains(account.broker) ? account.broker : (names.first ?? "")
+            tradeAccount = account.tradeAccount
+            tqAccount = account.tqAccount
+            enabled = account.enabled
+            selectedSymbol = account.symbols.first ?? ""
+        } else if broker.isEmpty {
+            // 新卡片默认选中第一个期货公司（对应 Qt checked_name）
+            broker = names.first ?? ""
         }
     }
 
     private func save() {
+        // 校验顺序与文案对应 Qt _on_save_clicked；密码留空 = 沿用旧值（仅新卡必填）
+        if broker.isEmpty {
+            alert = .inputError("请选择期货公司")
+            return
+        }
+        if (!tradeAccount.isEmpty && tradePassword.isEmpty && account == nil)
+            || (tradeAccount.isEmpty && !tradePassword.isEmpty) {
+            alert = .inputError("资金账号与交易密码需同时填写")
+            return
+        }
+        if tqAccount.trimmingCharacters(in: .whitespaces).isEmpty {
+            alert = .inputError("快期账号不能为空")
+            return
+        }
+        if tqPassword.isEmpty && account == nil {
+            alert = .inputError("快期密码不能为空")
+            return
+        }
+        if hasOptions && selectedSymbol.isEmpty {
+            alert = .inputError("请选择一个交易品种")
+            return
+        }
+
         var params: [String: Any] = [
-            "kind": kind,
-            "label": label,
-            "tq_account": tqAccount,
+            "account_id": accountID,
+            "kind": "live",
+            "label": label.trimmingCharacters(in: .whitespaces),
+            "broker": broker,
+            "trade_account": tradeAccount.trimmingCharacters(in: .whitespaces),
+            "tq_account": tqAccount.trimmingCharacters(in: .whitespaces),
             "enabled": enabled,
         ]
-        if kind == "sim" {
-            // 模拟单选：取 selectedSymbol；若未选则不传 symbols（沿用已有）
-            if !selectedSymbol.isEmpty {
-                params["symbols"] = [selectedSymbol]
-            }
-        } else {
-            params["symbols"] = Array(selectedSymbols)
-        }
-        if let account { params["account_id"] = account.id }
+        if !tradePassword.isEmpty { params["trade_password"] = tradePassword }
         if !tqPassword.isEmpty { params["tq_password"] = tqPassword }
-        if kind == "live" {
-            params["broker"] = broker
-            params["trade_account"] = tradeAccount
-            if !tradePassword.isEmpty { params["trade_password"] = tradePassword }
-        }
+        if hasOptions && !selectedSymbol.isEmpty { params["symbols"] = [selectedSymbol] }
+
         Task {
             await appState.runAction(method: "accounts.save", params: params)
-            saveMessage = "已保存（引擎运行中则下次启动生效）"
-            if account == nil { expanded = false }
-        }
-    }
-}
-
-// MARK: - 单选 Radio 按钮
-
-struct RadioRow: View {
-    let symbol: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Button {
-            isOn = true
-        } label: {
-            HStack {
-                Image(systemName: isOn ? "largecircle.fill.circle" : "circle")
-                    .foregroundColor(isOn ? .blue : .secondary)
-                Text(symbol)
-                    .font(.callout)
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
+            if appState.lastActionError.isEmpty {
+                alert = .accountSaved
+                // 新卡保存成功后从草稿区移除，accounts 刷新后出现正式卡（对应 Qt set_accounts 重建）
+                if account == nil { onDismissed?() }
+            } else {
+                alert = .inputError(appState.lastActionError)
             }
         }
-        .buttonStyle(.plain)
     }
-}
 
-// MARK: - 品种多选网格
-
-struct FlowGrid: View {
-    let items: [String]
-    @Binding var selected: Set<String>
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], alignment: .leading, spacing: 6) {
-            ForEach(items, id: \.self) { symbol in
-                Toggle(isOn: Binding(
-                    get: { selected.contains(symbol) },
-                    set: { if $0 { selected.insert(symbol) } else { selected.remove(symbol) } }
-                )) {
-                    Text(symbol)
-                        .font(.callout)
-                        .lineLimit(1)
-                }
-                .toggleStyle(.checkbox)
+    private func delete() {
+        if let account {
+            Task {
+                await appState.runAction(method: "accounts.delete", params: ["account_id": account.id])
             }
+        } else {
+            onDismissed?()
         }
     }
 }
