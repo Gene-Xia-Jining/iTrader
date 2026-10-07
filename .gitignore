@@ -28,3 +28,9 @@ iTrader.spec
 
 # AI 技能包（本地参考文档）
 .skills/
+
+# Swift 壳构建产物
+shell/.build/
+
+# 本地备份
+*.bak

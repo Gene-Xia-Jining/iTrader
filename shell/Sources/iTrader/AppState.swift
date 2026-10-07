@@ -1,0 +1,416 @@
+import Foundation
+import iTraderCore
+import AppKit
+import SwiftUI
+
+// MARK: - 模型（协议字段手工解析，见 src/backend/PROTOCOL.md）
+
+struct LogLine: Identifiable {
+    let id = UUID()
+    let time: Date
+    let level: String
+    let message: String
+
+    var color: Color {
+        switch level {
+        case "ERROR": return .red
+        case "WARNING": return .orange
+        case "SUCCESS": return .green
+        default: return .primary
+        }
+    }
+}
+
+struct AccountInfo: Identifiable {
+    let id: String
+    let kind: String
+    let label: String
+    let tqAccount: String
+    let broker: String
+    let tradeAccount: String
+    let symbols: [String]
+    let enabled: Bool
+
+    var isSim: Bool { kind == "sim" }
+
+    static func from(_ dict: [String: Any]) -> AccountInfo? {
+        guard let id = dict["id"] as? String else { return nil }
+        return AccountInfo(
+            id: id,
+            kind: dict["kind"] as? String ?? "live",
+            label: dict["label"] as? String ?? "",
+            tqAccount: dict["tq_account"] as? String ?? "",
+            broker: dict["broker"] as? String ?? "",
+            tradeAccount: dict["trade_account"] as? String ?? "",
+            symbols: dict["symbols"] as? [String] ?? [],
+            enabled: dict["enabled"] as? Bool ?? true
+        )
+    }
+}
+
+struct AccountRuntime: Identifiable {
+    let id: String
+    var running: Bool
+    var serverConnected: Bool
+}
+
+struct EngineStatus {
+    var autoTrade = false
+    var tradingActive = false
+    var accounts: [AccountRuntime] = []
+
+    static func from(_ dict: [String: Any]) -> EngineStatus {
+        var s = EngineStatus()
+        s.autoTrade = dict["auto_trade"] as? Bool ?? false
+        s.tradingActive = dict["trading_active"] as? Bool ?? false
+        s.accounts = (dict["accounts"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let id = item["account_id"] as? String else { return nil }
+            return AccountRuntime(
+                id: id,
+                running: item["running"] as? Bool ?? false,
+                serverConnected: item["server_connected"] as? Bool ?? false
+            )
+        }
+        return s
+    }
+}
+
+struct ConfigInfo {
+    var serverUrl = ""
+    var proxyUrl = ""
+    var autoCheckUpdate = true
+
+    static func from(_ dict: [String: Any]) -> ConfigInfo {
+        var c = ConfigInfo()
+        c.serverUrl = dict["server_url"] as? String ?? ""
+        c.proxyUrl = dict["proxy_url"] as? String ?? ""
+        c.autoCheckUpdate = dict["auto_check_update"] as? Bool ?? true
+        return c
+    }
+}
+
+enum ConnState {
+    case starting
+    case connected
+    case disconnected
+    case stopped  // 后端主动退出（quit / update.apply）
+}
+
+enum UpdatePhase: Equatable {
+    case idle
+    case checking
+    case available(version: String, hasPatch: Bool)
+    case latest(String)
+    case downloading
+    case ready(kind: String)
+    case failed(String)
+}
+
+// MARK: - AppState
+
+@MainActor
+final class AppState: ObservableObject {
+    @Published var connState: ConnState = .starting
+    @Published var backendVersion = ""
+    @Published var logs: [LogLine] = []
+    @Published var engineStatus = EngineStatus()
+    @Published var accounts: [AccountInfo] = []
+    @Published var config = ConfigInfo()
+    @Published var serverSymbols: [String] = []
+    @Published var symbolsMessage = ""
+    @Published var tokenStatus = ""
+    @Published var updatePhase = UpdatePhase.idle
+    @Published var lastActionError = ""
+
+    private var backend: BackendProcess?
+    private var client: RpcClient?
+    private var started = false
+    private var signalSources: [DispatchSourceSignal] = []
+
+    // -------- 启动 / 重连 --------
+
+    func start() {
+        guard !started else { return }
+        started = true
+        installExitHooks()
+        Task { await connectLoop() }
+    }
+
+    /// 壳退出时终止后端，避免孤儿后端常驻（后端收到 SIGINT 走优雅退出）。
+    /// AppKit 优雅退出走 willTerminateNotification；SIGTERM/SIGINT 不经过它，
+    /// 需要单独接管（否则 pkill/kill 直接杀壳，后端成孤儿）。
+    private func installExitHooks() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.backend?.terminate()
+            }
+        }
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)  // 屏蔽默认终止行为，交给 DispatchSource
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.backend?.terminate()
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
+    private func connectLoop() async {
+        while !Task.isCancelled {
+            do {
+                let proc = try backend ?? {
+                    let p = try BackendProcess()
+                    p.onExit = { [weak self] in
+                        Task { @MainActor in self?.handleBackendExit() }
+                    }
+                    backend = p
+                    return p
+                }()
+                let info = try await proc.connectOrStart()
+                let rpc = RpcClient(info: info)
+                await rpc.setHandlers(
+                    event: { [weak self] name, data in
+                        Task { @MainActor in self?.handleEvent(name: name, data: data) }
+                    },
+                    disconnect: { [weak self] in
+                        Task { @MainActor in self?.handleDisconnect() }
+                    }
+                )
+                try await rpc.connect()
+                client = rpc
+                connState = .connected
+                appendLog(level: "SUCCESS", message: "已连接后端 v\(info.version) (pid \(info.pid))")
+                backendVersion = info.version
+                try await refreshAll()
+                return
+            } catch {
+                connState = .disconnected
+                appendLog(level: "ERROR", message: "连接后端失败: \(error.localizedDescription)，3 秒后重试")
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    private func handleDisconnect() {
+        // 后端退出（quit/update）或崩溃：区分展示，连接循环在 quit 场景外继续重连
+        client = nil
+        guard connState != .stopped else { return }
+        connState = .disconnected
+        appendLog(level: "WARNING", message: "与后端断开，正在重连…")
+        Task { await connectLoop() }
+    }
+
+    private func handleBackendExit() {
+        client = nil
+        guard connState != .stopped else { return }
+        connState = .disconnected
+        appendLog(level: "ERROR", message: "后端进程已退出，正在重启…")
+        Task { await connectLoop() }
+    }
+
+    // -------- RPC 封装 --------
+
+    func call(method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
+        guard let rpc = client else { throw RpcError.connectionClosed }
+        return try await rpc.call(method: method, params: params)
+    }
+
+    func runAction(method: String, params: [String: Any] = [:]) async {
+        do {
+            lastActionError = ""
+            _ = try await call(method: method, params: params)
+        } catch {
+            lastActionError = error.localizedDescription
+            appendLog(level: "ERROR", message: "\(method) 失败: \(error.localizedDescription)")
+        }
+    }
+
+    private func refreshAll() async {
+        if let status = try? await call(method: "app.status") {
+            backendVersion = status["version"] as? String ?? backendVersion
+            if let cfg = status["config"] as? [String: Any] { config = ConfigInfo.from(cfg) }
+            accounts = (status["accounts"] as? [[String: Any]] ?? []).compactMap(AccountInfo.from)
+            if let engines = status["engines"] as? [String: Any] { engineStatus = EngineStatus.from(engines) }
+        }
+    }
+
+    // -------- 事件处理 --------
+
+    private func handleEvent(name: String, data: [String: Any]) {
+        switch name {
+        case "log":
+            appendLog(
+                level: data["level"] as? String ?? "INFO",
+                message: data["message"] as? String ?? ""
+            )
+        case "status":
+            engineStatus.tradingActive = data["trading_active"] as? Bool ?? engineStatus.tradingActive
+            if let accountID = data["account_id"] as? String,
+               let idx = engineStatus.accounts.firstIndex(where: { $0.id == accountID }) {
+                engineStatus.accounts[idx].serverConnected = data["server_connected"] as? Bool ?? false
+            }
+        case "trading_started", "trading_stopped":
+            Task { await refreshEngineOnly() }
+        case "config_changed":
+            Task { await refreshAll() }
+        case "signal_received":
+            if let signal = data["signal"] as? [String: Any] {
+                appendLog(level: "INFO", message: "收到信号: \(signal["symbol"] ?? "?") 目标仓位 \(signal["position"] ?? "?")")
+            }
+        case "trade_executed":
+            appendLog(level: "SUCCESS", message: "交易已执行: \(data["symbol"] ?? "?") 仓位 \(data["target_position"] ?? "?")")
+        case "trade_failed":
+            appendLog(level: "ERROR", message: "交易失败: \(data["symbol"] ?? "?") \(data["error"] ?? "")")
+        case "update_progress":
+            break  // 第一版不做进度条，完成/失败事件驱动状态
+        case "update_ready":
+            updatePhase = .ready(kind: data["kind"] as? String ?? "")
+        case "update_failed":
+            updatePhase = .failed(data["message"] as? String ?? "下载失败")
+        case "update_cancelled":
+            updatePhase = .idle
+        case "backend_stopping":
+            connState = .stopped
+            appendLog(level: "WARNING", message: "后端正在退出（\(data["reason"] ?? "")）")
+        default:
+            break
+        }
+    }
+
+    private func refreshEngineOnly() async {
+        if let engines = try? await call(method: "engine.status") {
+            engineStatus = EngineStatus.from(engines)
+        }
+    }
+
+    private func appendLog(level: String, message: String) {
+        logs.append(LogLine(time: Date(), level: level, message: message))
+        if logs.count > 500 { logs.removeFirst(logs.count - 500) }
+    }
+
+    // -------- 业务动作 --------
+
+    func toggleTrading(_ on: Bool) {
+        Task {
+            await runAction(method: on ? "engine.start" : "engine.stop")
+            await refreshEngineOnly()
+        }
+    }
+
+    func setAutoTrade(_ value: Bool) {
+        Task {
+            await runAction(method: "engine.set_auto_trade", params: ["value": value])
+        }
+    }
+
+    func saveConfig(serverUrl: String?, proxyUrl: String?) {
+        var params: [String: Any] = [:]
+        if let serverUrl { params["server_url"] = serverUrl }
+        if let proxyUrl { params["proxy_url"] = proxyUrl }
+        Task { await runAction(method: "config.save", params: params) }
+    }
+
+    func fetchSymbols() {
+        Task {
+            do {
+                lastActionError = ""
+                let resp = try await call(method: "symbols.fetch")
+                serverSymbols = resp["symbols"] as? [String] ?? []
+                symbolsMessage = resp["message"] as? String ?? ""
+            } catch {
+                symbolsMessage = "获取失败: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func testTqAuth(account: String, password: String) async -> String {
+        do {
+            let resp = try await call(
+                method: "accounts.test_tq_auth",
+                params: ["account": account, "password": password]
+            )
+            return resp["message"] as? String ?? "连接成功"
+        } catch {
+            return "连接失败: \(error.localizedDescription)"
+        }
+    }
+
+    func testServer(url: String?) async -> String {
+        do {
+            var params: [String: Any] = [:]
+            if let url { params["server_url"] = url }
+            let resp = try await call(method: "server.test", params: params)
+            return resp["message"] as? String ?? "连接成功"
+        } catch {
+            return "连接失败: \(error.localizedDescription)"
+        }
+    }
+
+    func refreshTokenStatus() {
+        Task {
+            if let resp = try? await call(method: "tokens.status") {
+                tokenStatus = resp["status"] as? String ?? ""
+            }
+        }
+    }
+
+    func requestToken(description: String) {
+        Task {
+            if let resp = try? await call(method: "tokens.request", params: ["description": description]) {
+                tokenStatus = resp["status"] as? String ?? ""
+            }
+        }
+    }
+
+    func checkUpdate() {
+        Task {
+            updatePhase = .checking
+            do {
+                let resp = try await call(method: "update.check")
+                switch resp["status"] as? String {
+                case "available":
+                    updatePhase = .available(
+                        version: resp["version"] as? String ?? "",
+                        hasPatch: resp["has_patch"] as? Bool ?? false
+                    )
+                case "latest":
+                    updatePhase = .latest(resp["message"] as? String ?? "已是最新版本")
+                default:
+                    updatePhase = .failed(resp["message"] as? String ?? "未找到可用更新")
+                }
+            } catch {
+                updatePhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func downloadUpdate() {
+        Task {
+            do {
+                _ = try await call(method: "update.download")
+                updatePhase = .downloading
+            } catch {
+                updatePhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func cancelUpdate() {
+        Task { await runAction(method: "update.cancel") }
+    }
+
+    func applyUpdate() {
+        Task { await runAction(method: "update.apply") }
+    }
+
+    func quitBackend() {
+        connState = .stopped
+        Task { await runAction(method: "app.quit") }
+    }
+}

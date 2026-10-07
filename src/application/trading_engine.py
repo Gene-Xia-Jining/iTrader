@@ -52,6 +52,10 @@ class TradingEngine:
     def is_running(self) -> bool:
         return self._running
 
+    @property
+    def server_connected(self) -> bool:
+        return self._server_connected
+
     def set_auto_trade(self, value: bool) -> None:
         self.auto_trade = value
         self._log(f"自动交易 {'开启' if value else '关闭'}", LogLevel.INFO)
