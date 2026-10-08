@@ -18,15 +18,22 @@ struct iTraderApp: App {
         .windowResizability(.contentMinSize)
 
         MenuBarExtra {
-            MenuBarView()
+            EmptyView()
                 .environmentObject(appState)
                 .environment(\.dynamicTypeSize, .xLarge)
         } label: {
-            Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                .frame(width: 18, height: 18)
-                .onTapGesture {
-                    NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
-                }
+            Button {
+                NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
+            } label: {
+                Image(systemName: "gauge.with.dots.needle.bottom.50percent")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+                MenuBarView()
+                    .environmentObject(appState)
+                    .environment(\.dynamicTypeSize, .xLarge)
+            }
         }
         .menuBarExtraStyle(.window)
     }
