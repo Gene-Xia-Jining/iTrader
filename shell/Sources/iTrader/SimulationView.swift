@@ -158,14 +158,14 @@ struct SimulationView: View {
         .pointerCursor()
     }
 
-    // MARK: - 品种区（单选 radio + 刷新按钮，对应 Qt SymbolPicker）
+    // MARK: - 品种区（单选胶囊 + 刷新按钮，对应 Qt SymbolPicker）
 
     private var symbolPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], alignment: .leading, spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], alignment: .leading, spacing: 10) {
                     ForEach(simAllSymbols, id: \.self) { symbol in
-                        RadioRow(symbol: symbol, isOn: Binding(
+                        SymbolCapsule(symbol: symbol, isOn: Binding(
                             get: { selectedSymbol == symbol },
                             set: { isOn in
                                 if isOn { selectedSymbol = symbol }
@@ -379,5 +379,51 @@ struct RadioRow: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
+    }
+}
+
+// MARK: - 品种胶囊（单选，无 radio 圆点）
+
+/// 品种胶囊：选中态实心主题色、未选描边；整颗按钮可点，无原生 radio 圆点。
+struct SymbolCapsule: View {
+    let symbol: String
+    @Binding var isOn: Bool
+    @Environment(\.colorScheme) private var scheme
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            isOn = true
+        } label: {
+            Text(symbol)
+                .font(AppTheme.bodyFont.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 30)
+                .foregroundColor(fgColor)
+                .background(bgColor)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 15)
+                        .stroke(borderColor, lineWidth: 1)
+                )
+                .cornerRadius(15)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .pointerCursor()
+    }
+
+    private var fgColor: Color {
+        isOn ? .white : AppTheme.ink(scheme)
+    }
+
+    private var bgColor: Color {
+        if isOn { return hovering ? AppTheme.primaryHover(scheme) : AppTheme.primary(scheme) }
+        return hovering ? AppTheme.sidebarHover(scheme) : .clear
+    }
+
+    private var borderColor: Color {
+        if isOn { return AppTheme.primary(scheme) }
+        return hovering ? AppTheme.dim(scheme) : AppTheme.hairline(scheme)
     }
 }
